@@ -10,7 +10,6 @@
 import os
 import json
 import time
-import shutil
 import base64
 import html as html_mod
 import random
@@ -240,14 +239,24 @@ def get_db():
 
 
 def backup_db():
-    """启动时按天备份 cards.db：换机器、误删时都还能找回（保留最近 7 份）。"""
+    """按天备份 cards.db：换机器、误删时都还能找回（保留最近 7 份）。
+
+    用 SQLite 的在线备份接口，而不是直接复制文件，避免把正在写入的
+    数据库复制成不完整的副本。
+    """
     if not os.path.isfile(DB_PATH):
         return None
     try:
         os.makedirs(DB_BACKUP_DIR, exist_ok=True)
         dst = os.path.join(DB_BACKUP_DIR, "cards-" + time.strftime("%Y%m%d") + ".db")
         if not os.path.exists(dst):
-            shutil.copy2(DB_PATH, dst)
+            src = sqlite3.connect(DB_PATH, timeout=10)
+            out = sqlite3.connect(dst)
+            try:
+                src.backup(out)
+            finally:
+                out.close()
+                src.close()
         files = sorted(f for f in os.listdir(DB_BACKUP_DIR)
                        if f.startswith("cards-") and f.endswith(".db"))
         for old in files[:-BACKUP_KEEP]:
@@ -258,6 +267,26 @@ def backup_db():
         return dst
     except OSError:
         return None
+
+
+# 每天第一次有请求时补一次备份（进程不重启也不会漏掉）
+_backup_state = {"date": time.strftime("%Y%m%d")}
+_backup_lock = Lock()
+
+
+@app.before_request
+def maybe_daily_backup():
+    today = time.strftime("%Y%m%d")
+    if _backup_state["date"] == today:
+        return
+    with _backup_lock:
+        if _backup_state["date"] == today:
+            return
+        _backup_state["date"] = today
+    try:
+        backup_db()
+    except Exception as exc:  # noqa: BLE001
+        log_error("daily backup failed: %s" % exc)
 
 
 def init_db():
@@ -1444,6 +1473,33 @@ def upload_music():
 CACHE_LONG_EXTS = {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".png", ".jpg", ".jpeg",
                    ".gif", ".webp", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".otf"}
 CACHE_SHORT_EXTS = {".js", ".css"}
+GZIP_STATIC_EXTS = {".js": "application/javascript", ".css": "text/css"}
+
+# js/css 的 gzip 结果缓存：{path: ((mtime, size), gz_bytes, etag)}
+_gz_cache = {}
+_gz_cache_lock = Lock()
+
+
+def static_gzip(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None, None
+    key = (st.st_mtime, st.st_size)
+    with _gz_cache_lock:
+        hit = _gz_cache.get(path)
+        if hit and hit[0] == key:
+            return hit[1], hit[2]
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None, None
+    etag = '"%x-%x"' % (int(st.st_mtime), st.st_size)
+    packed = gzip.compress(raw, 5)
+    with _gz_cache_lock:
+        _gz_cache[path] = (key, packed, etag)
+    return packed, etag
 
 
 @app.route("/<path:filename>")
@@ -1456,8 +1512,21 @@ def static_files(filename):
     except ValueError:
         inside = False
     if inside and os.path.isfile(full):
-        resp = send_from_directory(STATIC_DIR, filename, conditional=True)
         ext = os.path.splitext(filename)[1].lower()
+        if (ext in GZIP_STATIC_EXTS and
+                "gzip" in (request.headers.get("Accept-Encoding") or "").lower()):
+            packed, etag = static_gzip(full)
+            if packed is not None:
+                if request.headers.get("If-None-Match") == etag:
+                    resp = Response(status=304)
+                else:
+                    resp = Response(packed, mimetype=GZIP_STATIC_EXTS[ext])
+                    resp.headers["Content-Encoding"] = "gzip"
+                resp.headers["ETag"] = etag
+                resp.headers["Vary"] = "Accept-Encoding"
+                resp.headers["Cache-Control"] = "public, max-age=600"
+                return resp
+        resp = send_from_directory(STATIC_DIR, filename, conditional=True)
         if ext in CACHE_LONG_EXTS:
             resp.headers["Cache-Control"] = "public, max-age=604800"
         elif ext in CACHE_SHORT_EXTS:
