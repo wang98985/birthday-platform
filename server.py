@@ -19,6 +19,7 @@ import hmac
 import string
 import sqlite3
 import traceback
+import gzip
 from threading import Lock
 
 from flask import (
@@ -192,6 +193,36 @@ app = Flask(__name__, static_folder=None)  # 手动控制静态路由
 # 上传音乐上限 15MB，这里留出 multipart 余量，避免超大请求占满内存
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 _db_lock = Lock()
+
+# 需要 gzip 的响应类型（图片/音频/下载文件不压缩）
+COMPRESS_MIMETYPES = {
+    "text/html", "text/css", "text/plain", "application/javascript",
+    "application/json", "image/svg+xml", "application/xml",
+}
+
+
+@app.after_request
+def gzip_response(resp):
+    """对文本类响应做 gzip，1.2MB 的模板页可压到约 200KB。"""
+    if resp.direct_passthrough or resp.status_code != 200:
+        return resp
+    if resp.headers.get("Content-Encoding"):
+        return resp
+    if "gzip" not in (request.headers.get("Accept-Encoding") or "").lower():
+        return resp
+    if (resp.mimetype or "").lower() not in COMPRESS_MIMETYPES:
+        return resp
+    data = resp.get_data()
+    if len(data) < 1024:
+        return resp
+    packed = gzip.compress(data, 5)
+    if len(packed) >= len(data):
+        return resp
+    resp.set_data(packed)
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Content-Length"] = str(len(packed))
+    resp.headers["Vary"] = "Accept-Encoding"
+    return resp
 
 # 简易内存级 IP 限流：{ip: [timestamps]}
 _rate = {}
@@ -1148,8 +1179,9 @@ def build_fx_page(fid, platform_cfg):
             parts.append('<div class="fx-sign">' + html_mod.escape(signoff) + '</div>')
         parts.append('</div></div>')
         overlay = FX_OVERLAY + "".join(parts)
-    with open(path, "r", encoding="utf-8") as f:
-        page = f.read()
+    page = read_html_cached(path)
+    if page is None:
+        abort(404)
     page = inject_head(page, '<base href="/vendor/effects/">')
     page = inject_body_end(page, overlay)
     return Response(page, mimetype="text/html; charset=utf-8")

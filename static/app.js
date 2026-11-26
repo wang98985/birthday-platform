@@ -1027,7 +1027,7 @@
       $("short-note").textContent = "当前仅为即时链接（收不到愿望）";
       toast("保存失败：" + e.message);
     } finally {
-      btn.disabled = false; btn.textContent = "重新生成链接";
+      btn.disabled = false; btn.textContent = "保存 / 更新链接";
     }
   }
 
@@ -1192,6 +1192,14 @@
       }
     });
     $("btn-delete-card").addEventListener("click", deleteCurrentCard);
+    $("btn-new-card").addEventListener("click", function () {
+      if (!window.confirm("为当前内容新建一条短链？原来的卡片和愿望都会保留。")) return;
+      try { localStorage.removeItem(SHARE_STORE); } catch (e) {}
+      $("inbox-block").style.display = "none";
+      $("btn-delete-card").style.display = "none";
+      $("short-note").textContent = "正在生成新的短链…";
+      saveShortLink();
+    });
 
     // 模板添加 / 删除 / 恢复
     $("btn-add-tpl").addEventListener("click", openAddTemplate);
