@@ -267,11 +267,6 @@ def init_db():
         # 元信息表：记录 schema 版本，后续加字段/迁移时据此判断
         conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
         conn.execute("INSERT OR IGNORE INTO meta(k, v) VALUES('schema_version', '2')")
-        # WAL：读写并发更好，静态资源与 API 同时访问时不易互相阻塞
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-        except sqlite3.DatabaseError:
-            pass
         # 本次功能上线前生成的短链没有主人凭证：自动补发，并在控制台给出信箱链接
         legacy = conn.execute(
             "SELECT slug FROM cards WHERE owner_key IS NULL OR owner_key=''"
