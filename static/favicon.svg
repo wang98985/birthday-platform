@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="生日代码">
+  <rect width="64" height="64" rx="14" fill="#b88a5a"/>
+  <rect x="13" y="37" width="38" height="15" rx="4" fill="#fffdf8"/>
+  <rect x="13" y="31" width="38" height="8" rx="3" fill="#ffe9a8"/>
+  <rect x="22" y="21" width="4" height="10" rx="2" fill="#fffdf8"/>
+  <rect x="30" y="18" width="4" height="13" rx="2" fill="#fffdf8"/>
+  <rect x="38" y="21" width="4" height="10" rx="2" fill="#fffdf8"/>
+  <circle cx="24" cy="18" r="2.4" fill="#fff3c4"/>
+  <circle cx="32" cy="15" r="2.4" fill="#fff3c4"/>
+  <circle cx="40" cy="18" r="2.4" fill="#fff3c4"/>
+</svg>
