@@ -126,7 +126,11 @@
     if (pollingStopped || document.hidden || !slug || !key) return;
     fetch("/api/wishes?slug=" + encodeURIComponent(slug) +
           "&key=" + encodeURIComponent(key) + "&count=1")
-      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (r) {
+        // 卡片已被删除：停掉轮询，避免后台一直 404
+        if (r.status === 404) { pollingStopped = true; hideNewTip(); return null; }
+        return r.ok ? r.json() : null;
+      })
       .then(function (d) {
         if (!d) return;
         var diff = (d.count || 0) - lastCount;
@@ -220,8 +224,12 @@
       })
       .catch(function (err) {
         if (err.message === "forbidden") {
+          pollingStopped = true;
+          hideNewTip();
           setIdle("凭证无效，无法查看这个信箱。<br>请确认链接里的 <b>#k=…</b> 部分没有被改动。");
         } else if (err.message === "notfound") {
+          pollingStopped = true;
+          hideNewTip();
           setIdle("这份祝福不存在，可能已经被删除。");
         } else {
           setIdle("打开失败，请刷新重试。");

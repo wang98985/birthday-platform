@@ -6,25 +6,46 @@
 - 一键生成**分享链接**（即时链接，无需后端）或**短链**（存入服务器，长期有效）
 - 一键生成**二维码**（纯前端，运行时不依赖外网）
 - 一键下载**定制好的 Python 代码**（`turtle` 版，对方本地双击即可运行）
+- **愿望信箱**：收到亲友留言，支持未读角标、一键已读、删除信箱
 - 自包含：后端仅依赖 `Flask` + SQLite，无外部服务；前端无构建步骤
+
+> 约定：每次推送到 GitHub 都会同步更新本 README（功能说明 + 更新日志），保持文档与代码一致。
+
+## 功能一览
+
+| 模块 | 能力 |
+| --- | --- |
+| 模板 | Canvas 动画模板（银河 / 星空 / 像素 / 爱心 / 烟花…）、iframe 完整页面模板（星河许愿、3D 蛋糕）、特效库（2048、烟花、烟雾等 20+） |
+| 编辑 | 实时预览、背景音乐（内置曲库 / 上传）、模板库隐藏与恢复、自定义模板（Canvas / iframe / 特效） |
+| 分享 | 即时链接 `/view#c=…`、短链 `/c/<slug>`、二维码、复制链接；内容不变时复用同一条短链原地更新 |
+| 信箱 | `/inbox/<slug>#k=…` 主人专属页；未读徽标；**有新愿望时页面顶部浮出提示**（只查条数、不打断阅读）；一键已读；删除信箱 |
+| 编辑已有卡片 | `/?edit=<slug>#k=<key>` 或信箱页「编辑这张卡片」，保存后原地更新 |
+| 草稿 | 编辑器自动保存到 localStorage（7 天），下次进入可继续或放弃 |
+| 运维 | 每日自动备份（保留 7 份）、错误日志、gzip、静态资源 ETag/304、自定义 404 页 |
 
 ## 目录结构
 
 ```
 birthday-platform/
-├─ server.py            # Flask 后端（静态托管 + 卡片存取 API + 短链）
+├─ server.py            # Flask 后端（静态托管 + 卡片/愿望 API + 短链 + gzip + 备份）
 ├─ requirements.txt
 ├─ cards.db             # 运行后自动生成（SQLite）
+├─ backups/             # 每日自动备份 cards-YYYYMMDD.db（保留 7 份）
+├─ logs/error.log       # 未捕获异常日志
+├─ admin_key.txt        # 可选：管理口令（已 gitignore，勿提交）
 ├─ README.md
 └─ static/
    ├─ index.html        # 主页：模板库 + 定制表单 + 实时预览
    ├─ view.html         # 全屏观看页（链接 / 二维码打开的就是它）
+   ├─ inbox.html        # 愿望信箱（主人侧）
    ├─ styles.css
-   ├─ templates.js      # Canvas 动画模板（旋转银河蛋糕 / 像素风 / 星空贺卡）
+   ├─ templates.js      # Canvas 动画模板
+   ├─ templates-extra.js# 高级 Canvas 模板
    ├─ renderer.js       # 共享：配置编解码 + 渲染（DPR / 像素化）
-   ├─ app.js            # 编辑器与分享逻辑
+   ├─ app.js            # 编辑器、分享、信箱、草稿逻辑
    ├─ cake_template.py  # 下载 Python 代码用的模板源
-   └─ vendor/qrcode.min.js
+   ├─ og-cover.jpg      # 分享封面（微信 / QQ 卡片）
+   └─ vendor/           # 二维码、特效库等第三方静态资源
 ```
 
 ## 本地运行
@@ -92,9 +113,41 @@ server {
 
 ## 链接与二维码说明
 
-- **即时链接**：`/view#c=<base64>` —— 配置直接编码在 URL 里，不写库，立刻可用，关掉服务器也能打开（只要静态页还在）。
-- **短链**：`/c/<slug>` —— 配置存入 `cards.db`，链接更短更美观，长期有效。单 IP 每 60 秒最多创建 40 次（防滥用，可在 `server.py` 调整 `RATE_MAX`）。
+- **即时链接**：`/view#c=<base64>` —— 配置直接编码在 URL 里，不写库，立刻可用（只要静态页还在）。
+- **短链**：`/c/<slug>` —— 配置存入 `cards.db`，链接更短更美观，长期有效。单 IP 每 60 秒最多创建 40 次（`RATE_MAX`）。
 - **二维码**：浏览器本地生成，不调用任何外部接口。
+- **信箱链接**：`/inbox/<slug>#k=<ownerKey>` —— 凭证放在 URL hash 里，不会出现在服务端访问日志中；拿到链接即视为主人。
+
+## 主要接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/cards` | 新建卡片，返回 `slug` / `ownerKey` / 短链 / 信箱链接 |
+| GET | `/api/cards/<slug>` | 读取卡片配置（公开） |
+| PUT | `/api/cards/<slug>` | 原地更新（需 `ownerKey`） |
+| DELETE | `/api/cards/<slug>?key=` | 删除卡片与愿望（需 `ownerKey`） |
+| GET | `/api/wishes?slug=&key=` | 查看愿望并推进已读进度 |
+| GET | `/api/wishes?slug=&key=&count=1` | **只取条数**，不标记已读（信箱轮询用） |
+| POST | `/api/wishes` | 访客许愿（每 IP 每分钟 12 条、单卡上限 200 条） |
+| DELETE | `/api/wishes/<id>?slug=&key=` | 删除单条愿望 |
+| POST | `/api/wishes/read-all` | 一键已读 |
+| GET | `/api/inboxes` | 列出全部信箱（仅本机，或带 `X-Admin-Key`） |
+
+隐私相关接口（愿望、信箱列表、数据库导出）统一返回 `Cache-Control: no-store`，避免被浏览器或代理缓存。
+
+## 安全与限额
+
+- 管理接口需 `X-Admin-Key`，口令来自 `ADMIN_KEY` 环境变量或 `admin_key.txt`；未配置时管理接口只对本机可用。
+- 自定义模板 iframe 使用 sandbox 隔离，不能读取主站数据。
+- 音乐上传有单文件大小与总量配额；愿望接口有 IP 限流和单卡条数上限。
+- 卡片与愿望仅存于你自己的 `cards.db`，不上传任何第三方。
+
+## 数据、备份与排查
+
+- 每天第一次有请求时自动在线备份数据库到 `backups/`，保留最近 7 份（SQLite 在线备份，不会复制出半截文件）。
+- 未捕获异常写入 `logs/error.log`，同时向上返回 `{"error":"server_error"}`。
+- 文本响应开启 gzip；`js/css` 走 ETag + 304；图片/音频等长缓存 7 天。
+- 访问不存在的页面会返回站点风格的 404（`/api/*` 仍返回 JSON）。
 
 ## 扩展模板
 
@@ -107,11 +160,7 @@ my_tpl: {
 }
 ```
 
-后端 `ALLOWED_TEMPLATES` 白名单同步加上该 id 即可。
-
-## 数据与隐私
-
-所有卡片配置只存在你自己服务器的 `cards.db`（SQLite）里，不上传任何第三方。即时链接的配置在用户自己的浏览器 URL 中。
+后端 `ALLOWED_TEMPLATES` 白名单同步加上该 id 即可。完整页面模板走 `IFRAME_TEMPLATES`，特效走 `EFFECTS`。
 
 ## 部署到公网（GitHub + Render）
 
@@ -138,5 +187,21 @@ git push -u origin main
 - 想长期保留：把 `render.yaml` 的 `plan` 改成 `starter`（含 1GB 磁盘），并加上 `DATABASE_PATH=/var/data/cards.db` 与 `disk: {name: data, mountPath: /var/data, sizeGB: 1}`，重新部署即可。
 - 也可以直接用仓库里的 `Dockerfile` 部署到 Railway / Fly.io / 自建服务器，只要把卷挂到 `/data`。
 - `static/uploads/` 里上传的音乐与自定义模板属于容器内文件，重新部署会丢失（卡片与愿望不受影响）。
-- `/api/inboxes` 与 `/api/db/export` 只对本机开放，公网访问会返回 403；主人查看愿望请用生分享链接时保存的 `/inbox/<slug>#k=…`。
+- `/api/inboxes` 与 `/api/db/export` 只对本机开放，公网访问会返回 403；主人查看愿望请用生成分享链接时保存的 `/inbox/<slug>#k=…`。
 
+## 更新日志
+
+### 2026-11-26
+
+- 信箱页轮询「收到 N 条新愿望」提示：只查条数、不打断阅读、不误标已读。
+- 愿望信箱支持一键已读、删除信箱（连同愿望与分享链接一起失效）。
+- 本地信箱记录自动清理：卡片已在别处删除时，列表标记「链接已失效」并移除，避免反复 404。
+- 编辑器草稿自动保存 / 恢复（7 天），弹窗按钮窄屏自动换行。
+- 隐私接口统一 `Cache-Control: no-store`；新增站点风格 404 页（`/api/*` 仍为 JSON）。
+- 静态 js/css 启用 gzip 与 ETag；每日自动备份数据库；文本响应统一 gzip。
+
+### 更早
+
+- 分享封面 `og:image`、编辑已有卡片并原地更新、短链复用（PUT）、卡片删除。
+- 安全加固：管理接口鉴权、音乐上传配额、自定义模板沙箱、限流。
+- 愿望信箱 `/inbox/<slug>`、未读徽标、链接与二维码生成。

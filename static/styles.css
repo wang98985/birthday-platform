@@ -128,6 +128,9 @@ main { max-width: 1120px; margin: 0 auto; padding: 28px; }
 .inbox-acts { display: flex; gap: 8px; flex-shrink: 0; }
 .inbox-date { font-size: 11px; color: var(--ink-soft); margin-top: 3px; }
 .inbox-empty { font-size: 13px; color: var(--ink-soft); text-align: center; padding: 28px 10px; line-height: 1.9; }
+.inbox-item.inbox-dead { opacity: .55; }
+.inbox-item.inbox-dead .inbox-name { text-decoration: line-through; }
+.btn.disabled { opacity: .45; pointer-events: none; }
 .inbox-manual { display: flex; gap: 8px; margin-top: 10px; }
 .inbox-manual input {
   flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line);

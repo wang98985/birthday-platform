@@ -891,6 +891,13 @@
     return m ? { slug: m[1], key: m[2] } : null;
   }
 
+  function forgetInbox(slug) {
+    try {
+      const left = loadInboxes().filter(function (x) { return x.slug !== slug; });
+      localStorage.setItem(INBOX_STORE, JSON.stringify(left));
+    } catch (e) {}
+  }
+
   function fillInboxCount(row, url) {
     const parsed = parseInboxUrl(url);
     const line = row.querySelector(".inbox-date");
@@ -898,9 +905,24 @@
     // count=1 只取未读数，不会把新愿望标记成已读
     fetch("/api/wishes?count=1&slug=" + encodeURIComponent(parsed.slug) +
           "&key=" + encodeURIComponent(parsed.key))
-      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (r) {
+        if (r.status === 404) {
+          // 卡片已在别处删除：清掉本地记录，避免每次打开列表都 404
+          forgetInbox(parsed.slug);
+          row.classList.add("inbox-dead");
+          line.textContent += " · 链接已失效（卡片已删除）";
+          row.querySelectorAll("a.btn, button.btn").forEach(function (el) {
+            el.classList.add("disabled");
+            el.setAttribute("aria-disabled", "true");
+            if (el.tagName === "A") el.removeAttribute("href");
+            el.addEventListener("click", function (ev) { ev.preventDefault(); });
+          });
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
       .then(function (d) {
-        if (!d) { line.textContent += " · 无凭证"; return; }
+        if (!d) return;
         if (d.unread) line.textContent += " · " + d.unread + " 条新愿望";
         else line.textContent += d.count ? " · 暂无新愿望" : " · 暂无愿望";
       })
@@ -1034,7 +1056,7 @@
           const s = JSON.parse(localStorage.getItem(SHARE_STORE) || "null");
           if (s && s.slug === item.slug) localStorage.removeItem(SHARE_STORE);
         } catch (e) {}
-        toast("信箱已删除");
+        toast(res.status === 404 ? "该信箱已不存在，已从列表移除" : "信箱已删除");
         refreshInboxBadge();
         openInboxList();
       })

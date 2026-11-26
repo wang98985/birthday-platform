@@ -200,9 +200,15 @@ COMPRESS_MIMETYPES = {
 }
 
 
+# 涉及隐私的接口：禁止浏览器 / 代理缓存（愿望内容、信箱列表、数据库导出）
+PRIVATE_API_PREFIXES = ("/api/wishes", "/api/inboxes", "/api/db/")
+
+
 @app.after_request
 def gzip_response(resp):
     """对文本类响应做 gzip，1.2MB 的模板页可压到约 200KB。"""
+    if request.path.startswith(PRIVATE_API_PREFIXES):
+        resp.headers["Cache-Control"] = "no-store"
     if resp.direct_passthrough or resp.status_code != 200:
         return resp
     if resp.headers.get("Content-Encoding"):
@@ -360,6 +366,47 @@ def handle_uncaught(exc):
         return exc
     log_error(traceback.format_exc())
     return jsonify({"error": "server_error"}), 500
+
+
+NOT_FOUND_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>页面走丢了</title>
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#f7f3ec; color:#2b2722;
+         font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .box { text-align:center; padding:32px 22px; max-width:420px; }
+  .code { font-size:56px; font-weight:600; color:#b88a5a; letter-spacing:2px; }
+  h1 { font-size:18px; font-weight:600; margin:10px 0 8px; }
+  p { font-size:13px; color:#8b8175; line-height:1.9; margin:0 0 20px; word-break:break-all; }
+  a { display:inline-block; text-decoration:none; background:#b88a5a; color:#fffdf8;
+      border-radius:8px; padding:9px 20px; font-size:13px; }
+  a:hover { opacity:.9; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="code">404</div>
+  <h1>这个页面走丢了</h1>
+  <p>%s</p>
+  <a href="/">回到首页</a>
+</div>
+</body>
+</html>"""
+
+
+@app.errorhandler(404)
+def handle_not_found(exc):
+    # 接口保持 JSON，页面给一个可读的 404（默认 Werkzeug 页面太生硬）
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "not_found"}), 404
+    tip = "链接可能已失效，或者卡片已被主人删除。"
+    return Response(NOT_FOUND_HTML % tip, status=404,
+                    content_type="text/html; charset=utf-8")
 
 
 def gen_owner_key():
