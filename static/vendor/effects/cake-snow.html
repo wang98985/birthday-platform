@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>落雪蛋糕</title>
+<style>
+html,body{margin:0;height:100%;background:#05060f;overflow:hidden}
+iframe{position:fixed;inset:0;width:100%;height:100%;border:0;display:block}
+</style>
+</head>
+<body>
+<iframe allow="autoplay; fullscreen"></iframe>
+<script>
+(function () {
+  // 复用星河蛋糕模板的 3D 场景：跳过开场便签、收起面板、点亮指定特效
+  var c = new URLSearchParams(location.search).get("c") || "";
+  var src = "/embed/hbcake?nointro=1&bare=1&fx=snow";
+  if (c) src += "&c=" + encodeURIComponent(c);
+  document.querySelector("iframe").src = src;
+})();
+</script>
+</body>
+</html>

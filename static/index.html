@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>生日代码 · 在线生成平台</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">🎂 生日代码<span class="sub">在线生成 · 可分享可部署</span></div>
+    <nav class="nav">
+      <a href="#" onclick="document.getElementById('gallery-view').scrollIntoView();return false;">模板库</a>
+      <a href="#" onclick="document.getElementById('fx-block').scrollIntoView({behavior:'smooth'});return false;">特效库</a>
+      <a href="#" id="nav-inbox">愿望信箱<span class="dot" id="nav-inbox-badge" hidden></span></a>
+      <a href="https://github.com" target="_blank" rel="noopener">关于</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 模板库视图 -->
+    <section id="gallery-view">
+      <div class="hero">
+        <h1>别人送蛋糕，我送电子版的</h1>
+        <p>选一个模板，填人名、生日、祝福语，生成专属链接或二维码，发给你在乎的人。</p>
+      </div>
+      <div class="gallery-tools">
+        <button class="btn primary" id="btn-add-tpl">＋ 添加自定义模板</button>
+        <button class="btn small" id="btn-restore-tpl" style="display:none">恢复内置模板</button>
+      </div>
+      <div id="gallery" class="gallery"></div>
+
+      <div id="fx-block" class="fx-block">
+        <div class="section-head">
+          <h2>特效库 <span class="sub">来自 rover95/effect · 27 个开源特效</span></h2>
+          <p>点击卡片即可预览，或直接用它创建专属生日模板。</p>
+        </div>
+        <div id="fx-gallery" class="gallery fx-gallery"></div>
+      </div>
+    </section>
+
+    <!-- 编辑器视图 -->
+    <section id="editor-view" class="editor">
+      <div class="editor-head">
+        <button class="back" id="btn-back">← 返回模板库</button>
+        <h2>定制：<span id="tpl-name"></span></h2>
+      </div>
+      <div class="editor-grid">
+        <!-- 左侧表单 -->
+        <div class="panel">
+          <div class="field">
+            <label>模板</label>
+            <select id="f-template"></select>
+          </div>
+          <div class="field">
+            <label>收礼人姓名 <span class="hint">会显示在蛋糕上</span></label>
+            <input type="text" id="f-name" maxlength="30" placeholder="例如：小明" />
+          </div>
+          <div class="field">
+            <label>生日 <span class="hint">可选，显示在标题旁</span></label>
+            <input type="date" id="f-birthday" />
+          </div>
+          <div class="field">
+            <label>祝福语 <span class="hint">支持换行，最多 300 字</span></label>
+            <textarea id="f-wish" maxlength="300" placeholder="写下你想说的话…"></textarea>
+          </div>
+          <div class="field" id="letter-field" style="display:none">
+            <label>信件内容 <span class="hint">可选，每行一段，显示在「给你的一封信」里</span></label>
+            <textarea id="f-letter" maxlength="1000" placeholder="写一封只属于 Ta 的信，留空则使用模板默认信件…"></textarea>
+          </div>
+          <div class="field">
+            <label>落款 <span class="hint">可选，例如：—— 爱你的 XX</span></label>
+            <input type="text" id="f-signoff" maxlength="40" placeholder="—— 藏在代码里的浪漫" />
+          </div>
+          <div class="field">
+            <label>主题色</label>
+            <input type="color" id="f-accent" value="#ffe9a8" />
+            <span class="hint">文字与点缀颜色</span>
+          </div>
+          <div class="field">
+            <label class="check"><input type="checkbox" id="f-pixel" /> 开启像素风（复古效果）</label>
+          </div>
+
+          <div class="field">
+            <label class="check"><input type="checkbox" id="f-music-enabled" /> 开启背景音乐</label>
+          </div>
+          <div class="field music-config" id="music-config">
+            <label>音乐来源</label>
+            <select id="f-music-source">
+              <option value="builtin">内置音乐</option>
+              <option value="upload">上传音乐</option>
+              <option value="synth">合成八音盒</option>
+              <option value="none">不播放</option>
+            </select>
+            <div class="sub-row" id="music-builtin-wrap">
+              <select id="f-music-track" style="flex:1"></select>
+            </div>
+            <div class="sub-row" id="music-upload-wrap" style="display:none">
+              <input type="file" id="f-music-file" accept="audio/mp3,audio/wav,audio/m4a,audio/ogg,audio/aac,audio/*" />
+              <span class="music-name" id="music-upload-name">未上传</span>
+            </div>
+            <div class="vol-row">
+              <label>音量</label>
+              <input type="range" id="f-music-volume" min="0" max="1" step="0.01" value="0.6" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧预览 -->
+        <div>
+          <div class="preview-wrap">
+            <canvas id="preview"></canvas>
+            <span class="tag" id="preview-tag">预览</span>
+          </div>
+          <div class="actions" style="margin-top:14px;">
+            <button class="btn primary" id="btn-share">🔗 生成分享链接 / 二维码</button>
+            <button class="btn" id="btn-full">📺 全屏预览</button>
+            <button class="btn" id="btn-download-py">🐍 下载 Python 代码</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 分享弹窗 -->
+  <div class="modal-mask" id="modal">
+    <div class="modal">
+      <h3>分享这份生日蛋糕</h3>
+      <div class="link-row">
+        <input type="text" id="link-input" readonly />
+        <button class="btn" id="btn-copy">复制</button>
+      </div>
+      <div class="qr-box"><div id="qrcode"></div></div>
+      <div class="tip" id="short-note"></div>
+      <div class="inbox-block" id="inbox-block" style="display:none">
+        <label class="inbox-label">我的愿望信箱 <span class="hint">只有你能打开，不要发给别人</span></label>
+        <div class="link-row">
+          <input type="text" id="inbox-input" readonly />
+          <button class="btn" id="btn-copy-inbox">复制</button>
+        </div>
+        <button class="btn small" id="btn-open-inbox">打开信箱</button>
+      </div>
+      <div class="tip">访客在页面左下角许的愿，会出现在「愿望信箱」里，只有你能查看。</div>
+      <div class="modal-actions">
+        <button class="btn" id="btn-save-short">重新生成链接</button>
+        <button class="btn primary" id="modal-close">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 愿望信箱列表 -->
+  <div class="modal-mask" id="inbox-modal">
+    <div class="modal">
+      <h3>我的愿望信箱</h3>
+      <div class="tip">你分享出去的每一份祝福都会在这里汇总，Ta 许下的愿望也只在这里能看到。</div>
+      <div id="inbox-list" class="inbox-list"></div>
+      <div class="inbox-manual">
+        <input type="text" id="inbox-manual" placeholder="粘贴愿望信箱链接（…/inbox/xxx#k=…）" />
+        <button class="btn small" id="btn-inbox-manual">打开</button>
+      </div>
+      <div class="tip">换了设备或清了缓存时，把之前复制的信箱链接粘贴到这里即可找回。</div>
+      <div class="inbox-manual">
+        <button class="btn small" id="btn-db-export">导出数据备份（cards.db）</button>
+      </div>
+      <div class="tip">换电脑时把这个文件放回项目目录，全部卡片与愿望都会跟过来。</div>
+      <div class="modal-actions">
+        <button class="btn primary" id="inbox-close">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模板 / 特效预览弹窗 -->
+  <div class="modal-mask pv-mask" id="preview-modal">
+    <div class="pv-panel">
+      <div class="pv-head">
+        <div class="pv-title-wrap">
+          <h3 id="pv-title">预览</h3>
+          <span class="pv-desc" id="pv-desc"></span>
+        </div>
+        <button class="pv-close" id="pv-close" title="关闭">×</button>
+      </div>
+      <div class="pv-stage" id="pv-stage">
+        <canvas id="pv-canvas"></canvas>
+      </div>
+      <div class="pv-foot">
+        <span class="pv-note">实时预览 · 关闭后可继续定制</span>
+        <button class="btn primary" id="pv-use">使用此模板</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 添加自定义模板弹窗 -->
+  <div class="modal-mask" id="tpl-modal">
+    <div class="modal">
+      <h3>添加自定义模板</h3>
+      <div class="field">
+        <label>模板名称</label>
+        <input type="text" id="t-name" maxlength="30" placeholder="如：星空寄语" />
+      </div>
+      <div class="field">
+        <label>一句话描述</label>
+        <input type="text" id="t-desc" maxlength="80" placeholder="如：浪漫星空下的一句话" />
+      </div>
+      <div class="field">
+        <label>模板类型</label>
+        <select id="t-kind">
+          <option value="canvas">Canvas 风格变体（基于内置动画）</option>
+          <option value="iframe">上传 HTML 单文件</option>
+          <option value="effect">特效库特效（来自 effect 库）</option>
+        </select>
+      </div>
+      <div class="field" id="t-effect-wrap" style="display:none">
+        <label>选择特效<span class="hint">共 27 个开源特效</span></label>
+        <select id="t-effect"></select>
+      </div>
+      <div class="field" id="t-base-wrap">
+        <label>基础风格</label>
+        <select id="t-base">
+          <option value="galaxy">旋转银河蛋糕</option>
+          <option value="pixel">像素风旋转蛋糕</option>
+          <option value="starry">星空贺卡</option>
+          <option value="heart">跳动爱心</option>
+          <option value="fireworks">烟花夜空</option>
+          <option value="confetti">彩纸气球</option>
+          <option value="warp">星际跃迁</option>
+          <option value="aurora">极光雪夜</option>
+          <option value="neon">霓虹雨夜</option>
+          <option value="particlecake">粒子旋转蛋糕</option>
+          <option value="heartstorm">心形粒子风暴</option>
+          <option value="bokeh">梦幻散景</option>
+          <option value="ribbon">流光丝带</option>
+          <option value="candle">烛光暖夜</option>
+          <option value="matrixcode">代码雨</option>
+          <option value="vortex">银河漩涡</option>
+        </select>
+      </div>
+      <div class="field" id="t-html-wrap" style="display:none">
+        <label>HTML 文件<span class="hint">单文件，≤2MB</span></label>
+        <input type="file" id="t-html" accept=".html,.htm" />
+      </div>
+      <div class="field">
+        <label>主题色</label>
+        <input type="color" id="t-accent" value="#ffe9a8" />
+      </div>
+      <div class="field">
+        <label class="check"><input type="checkbox" id="t-music-enabled" /> 为模板配置默认背景音乐</label>
+      </div>
+      <div class="field music-config" id="t-music-config">
+        <label>音乐来源</label>
+        <select id="t-music-source">
+          <option value="builtin">内置音乐</option>
+          <option value="upload">上传音乐</option>
+          <option value="synth">合成八音盒</option>
+        </select>
+        <div class="sub-row" id="t-music-builtin-wrap">
+          <select id="t-music-track" style="flex:1"></select>
+        </div>
+        <div class="sub-row" id="t-music-upload-wrap" style="display:none">
+          <input type="file" id="t-music-file" accept="audio/mp3,audio/wav,audio/m4a,audio/ogg,audio/aac,audio/*" />
+        </div>
+        <div class="vol-row">
+          <label>音量</label>
+          <input type="range" id="t-music-volume" min="0" max="1" step="0.01" value="0.6" />
+        </div>
+      </div>
+      <div class="tip" id="t-error" style="color:#b04a3a"></div>
+      <div class="modal-actions">
+        <button class="btn" id="t-cancel">取消</button>
+        <button class="btn primary" id="t-submit">添加</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <footer>生日代码平台 · 把浪漫藏进代码里 · 可私有部署</footer>
+
+  <script src="/vendor/qrcode.min.js"></script>
+  <script src="/templates.js"></script>
+  <script src="/templates-extra.js"></script>
+  <script src="/effects.js"></script>
+  <script src="/renderer.js"></script>
+  <script src="/music.js"></script>
+  <script src="/wish-intro.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

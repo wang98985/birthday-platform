@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>生日快乐</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0b1026; overflow: hidden; }
+    #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    #stage.hidden { display: none; }
+    .stage-frame {
+      position: fixed; inset: 0; width: 100%; height: 100%; border: none;
+      display: none; background: #0b1026;
+    }
+    .stage-frame.show { display: block; }
+
+    /* 入场转场 */
+    #stage.enter, #stage-frame.enter { animation: stageIn .95s cubic-bezier(.2,.8,.3,1) both; }
+    @keyframes stageIn {
+      from { opacity: 0; transform: scale(1.05); }
+      to { opacity: 1; transform: none; }
+    }
+    .bar {
+      position: fixed; top: 14px; right: 14px; z-index: 20;
+      display: flex; gap: 8px; opacity: 1; transition: opacity .4s;
+    }
+    .bar.hidden { opacity: 0; pointer-events: none; }
+    .bar button {
+      background: rgba(20,16,8,.55); color: #fffdf8; border: 1px solid rgba(255,255,255,.2);
+      padding: 8px 14px; border-radius: 20px; font-size: 13px; cursor: pointer;
+      backdrop-filter: blur(6px);
+    }
+    .bar button:hover { background: rgba(184,138,90,.85); }
+    .qr-mask {
+      position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 30;
+      display: none; align-items: center; justify-content: center;
+    }
+    .qr-mask.show { display: flex; }
+    .qr-card {
+      background: #fffdf8; padding: 20px; border-radius: 16px; text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,.4);
+    }
+    .qr-card .link { font-size: 12px; color: #6b6358; word-break: break-all; max-width: 240px; margin-top: 10px; }
+    .qr-card .close { margin-top: 12px; padding: 7px 16px; border: none; background: #2b2722; color: #fff; border-radius: 8px; cursor: pointer; }
+    .hint {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,.55); font-size: 12px; z-index: 20; opacity: 1; transition: opacity .4s;
+    }
+    .hint.hidden { opacity: 0; }
+
+    /* 点击进入遮罩：解锁自动播放 */
+    .enter-mask {
+      position: fixed; inset: 0; z-index: 40; display: none;
+      align-items: center; justify-content: center;
+      background: radial-gradient(circle at 50% 45%, rgba(40,20,60,.85), rgba(8,6,20,.95));
+      cursor: pointer;
+    }
+    .enter-mask.show { display: flex; }
+    .enter-card {
+      text-align: center; color: #fffdf8;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .enter-card .big { font-size: 30px; font-weight: 700; letter-spacing: 2px; }
+    .enter-card .sub { font-size: 13px; color: rgba(255,255,255,.6); margin-top: 10px; }
+    @keyframes pulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.06);} }
+
+    /* 许愿入口：所有模板通用 */
+    .wish-fab {
+      position: fixed; left: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+      z-index: 21; display: none;
+      align-items: center; gap: 6px; padding: 10px 16px; border: none; border-radius: 999px;
+      background: rgba(184,138,90,.94); color: #fffdf8; font-size: 13px; cursor: pointer;
+      box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    }
+    .wish-fab.show { display: inline-flex; animation: wishPop .5s ease both, wishGlow 2.2s ease-in-out 1s 2; }
+    @keyframes wishPop { from { opacity: 0; transform: translateY(14px) scale(.92); } to { opacity: 1; transform: none; } }
+    @keyframes wishGlow {
+      0%, 100% { box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+      50% { box-shadow: 0 8px 32px rgba(184,138,90,.9); }
+    }
+    .wish-mask {
+      position: fixed; inset: 0; z-index: 45; display: none; padding: 20px;
+      align-items: center; justify-content: center; background: rgba(0,0,0,.6);
+    }
+    .wish-mask.show { display: flex; }
+    .wish-card {
+      width: min(420px, 100%); background: #fffdf8; border-radius: 16px; padding: 22px;
+      color: #2b2722; box-shadow: 0 24px 60px rgba(0,0,0,.45);
+    }
+    .wish-card h3 { margin: 0 0 4px; font-size: 17px; }
+    .wish-card .tip { margin: 0 0 12px; font-size: 12px; color: #8b8175; }
+    .wish-card textarea {
+      width: 100%; box-sizing: border-box; min-height: 110px; resize: vertical;
+      border: 1px solid #e2d9cb; border-radius: 10px; padding: 10px;
+      font-size: 14px; font-family: inherit; line-height: 1.6; color: #2b2722; background: #fff;
+    }
+    .wish-card textarea:focus { outline: none; border-color: #b88a5a; }
+    .wish-card .wish-name {
+      width: 100%; box-sizing: border-box; margin-bottom: 8px; padding: 9px 10px;
+      border: 1px solid #e2d9cb; border-radius: 10px; font-size: 13px;
+      font-family: inherit; color: #2b2722; background: #fff;
+    }
+    .wish-card .wish-name:focus { outline: none; border-color: #b88a5a; }
+    .wish-foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #9a9082; }
+    .wish-foot b { color: #b88a5a; font-weight: 600; }
+    .wish-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+    .wish-actions button { border: none; border-radius: 9px; padding: 9px 18px; font-size: 13px; cursor: pointer; }
+    .wish-send { background: #b88a5a; color: #fff; }
+    .wish-send[disabled] { opacity: .6; cursor: default; }
+    .wish-cancel { background: #efe7da; color: #5b5348; }
+    .wish-done { text-align: center; padding: 14px 4px 4px; font-size: 14px; line-height: 1.8; }
+    .wish-done .big { font-size: 26px; color: #b88a5a; margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <iframe id="stage-frame" class="stage-frame" allow="autoplay; fullscreen"></iframe>
+
+  <div class="bar" id="bar">
+    <button id="btn-music" style="display:none">🔇</button>
+    <button id="btn-qr">二维码</button>
+    <button id="btn-copy">复制链接</button>
+    <button onclick="location.href='/'">制作同款</button>
+  </div>
+  <div class="hint" id="hint">移动鼠标显示菜单 · 扫码或分享链接送给 Ta</div>
+
+  <div class="enter-mask" id="enter-mask">
+    <div class="enter-card">
+      <div class="big">点击进入 ♪</div>
+      <div class="sub" id="enter-sub">点击开启音乐与动画</div>
+    </div>
+  </div>
+
+  <div class="qr-mask" id="qr-mask">
+    <div class="qr-card">
+      <div id="qr-box"></div>
+      <div class="link" id="qr-link"></div>
+      <button class="close" id="qr-close">关闭</button>
+    </div>
+  </div>
+
+  <button class="wish-fab" id="wish-fab">✉ 许个愿</button>
+  <div class="wish-mask" id="wish-mask">
+    <div class="wish-card">
+      <div id="wish-form">
+        <h3>许个愿吧</h3>
+        <p class="tip">写下你的愿望或想说的话，会悄悄送到 Ta 的信箱里</p>
+        <input class="wish-name" id="wish-name" maxlength="20" placeholder="你的名字（可选，让 Ta 知道是谁写的）" />
+        <textarea id="wish-text" maxlength="200" placeholder="愿你岁岁平安，万事胜意…"></textarea>
+        <div class="wish-foot"><span>只有 Ta 能看到</span><span><b id="wish-count">0</b>/200</span></div>
+        <div class="wish-actions">
+          <button class="wish-cancel" id="wish-cancel">取消</button>
+          <button class="wish-send" id="wish-send">发送愿望</button>
+        </div>
+      </div>
+      <div id="wish-done" style="display:none"></div>
+    </div>
+  </div>
+
+  <script src="/vendor/qrcode.min.js"></script>
+  <script src="/templates.js"></script>
+  <script src="/templates-extra.js"></script>
+  <script src="/renderer.js"></script>
+  <script src="/music.js"></script>
+  <script src="/wish-intro.js"></script>
+  <script>
+  (function () {
+    var fallback = {
+      template: "galaxy", name: "亲爱的你", birthday: "",
+      wish: "愿新的一岁 闪闪发光\n平安喜乐 万事胜意",
+      signoff: "—— 藏在代码里的浪漫", accent: "#ffe9a8", pixel: false,
+      music: { enabled: false, source: "none", trackId: "", url: "", volume: 0.6 }
+    };
+    var registry = window.BirthdayTemplates.registry;
+    var BR = window.BirthdayRenderer;
+    var BM = window.BirthdayMusic;
+    var canvas = document.getElementById("stage");
+    var frame = document.getElementById("stage-frame");
+    var cfg = null;
+    var cardSlug = null;   // 短链 id：只有短链页面才能收愿望
+    var player = new BM.MusicPlayer();
+    var musicBtn = document.getElementById("btn-music");
+
+    function normalizeMusic(c) {
+      if (!c || typeof c !== "object") return { enabled: false, source: "none", trackId: "", url: "", volume: 0.6 };
+      return {
+        enabled: !!c.enabled,
+        source: (c.source === "builtin" || c.source === "upload" || c.source === "synth") ? c.source : "none",
+        trackId: c.trackId || "",
+        url: c.url || "",
+        volume: typeof c.volume === "number" ? Math.max(0, Math.min(1, c.volume)) : 0.6
+      };
+    }
+
+    function loadCustomTemplates() {
+      return fetch("/api/templates")
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          (data.custom || []).forEach(function (c) {
+            if (!c || !c.id) return;
+            if (c.kind === "iframe") {
+              registry[c.id] = {
+                id: c.id, name: c.name || "自定义模板", desc: c.desc || "",
+                kind: "iframe", embedUrl: "/embed/" + c.id
+              };
+            } else if (c.kind === "effect" && c.effect) {
+              registry[c.id] = {
+                id: c.id, name: c.name || "自定义模板", desc: c.desc || "",
+                kind: "iframe", embedUrl: "/fx/" + c.effect
+              };
+            } else {
+              var base = registry[c.base] || registry.galaxy;
+              registry[c.id] = {
+                id: c.id, name: c.name || "自定义模板", desc: c.desc || "",
+                kind: "canvas", draw: base.draw, forcePixel: !!base.forcePixel,
+                accent: c.accent || ""
+              };
+            }
+          });
+        })
+        .catch(function () {});
+    }
+
+    async function resolve() {
+      await loadCustomTemplates();
+      var params = new URLSearchParams(location.search);
+      var id = params.get("id");
+      if (!id) {
+        var m = location.pathname.match(/\/c\/([A-Za-z0-9]+)/);
+        if (m) id = m[1];
+      }
+      var hash = location.hash.replace(/^#/, "");
+      if (id) {
+        try {
+          var r = await fetch("/api/cards/" + encodeURIComponent(id));
+          var card = r.ok ? await r.json() : null;
+          cfg = card || fallback;
+          if (r.ok && card) cardSlug = id;
+        } catch (e) {
+          cfg = fallback;
+        }
+        cfg.music = normalizeMusic(cfg.music);
+        start();
+      } else if (hash.indexOf("c=") === 0) {
+        try { cfg = BR.decodeConfig(hash.slice(2)); } catch (e) { cfg = fallback; }
+        // 即时链接带上 ?s=<短链id> 时同样能收愿望（配置仍取自 hash，内容永远是最新的）
+        var s = params.get("s");
+        if (s && /^[A-Za-z0-9]{4,12}$/.test(s)) cardSlug = s;
+        cfg.music = normalizeMusic(cfg.music);
+        start();
+      } else if (params.get("s") && /^[A-Za-z0-9]{4,12}$/.test(params.get("s"))) {
+        // 只带 ?s=<slug>：配置从服务端取，同样能收愿望
+        var sid2 = params.get("s");
+        try {
+          var r2 = await fetch("/api/cards/" + encodeURIComponent(sid2));
+          cfg = r2.ok ? await r2.json() : fallback;
+          if (r2.ok) cardSlug = sid2;
+        } catch (e) { cfg = fallback; }
+        cfg.music = normalizeMusic(cfg.music);
+        start();
+      } else {
+        cfg = fallback; start();
+      }
+    }
+
+    function refreshMusicBtn() {
+      var c = player.getConfig();
+      if (!c.enabled || c.source === "none") {
+        musicBtn.style.display = "none";
+      } else {
+        musicBtn.style.display = "";
+        musicBtn.textContent = player.isPlaying() ? "🔊" : "🔈";
+      }
+    }
+
+    // ---------- 许愿：所有模板通用，仅短链页面显示 ----------
+    function initWish() {
+      if (!cardSlug) return;
+      var fab = document.getElementById("wish-fab");
+      var mask = document.getElementById("wish-mask");
+      var nameInput = document.getElementById("wish-name");
+      var text = document.getElementById("wish-text");
+      var count = document.getElementById("wish-count");
+      var send = document.getElementById("wish-send");
+      var form = document.getElementById("wish-form");
+      var done = document.getElementById("wish-done");
+      fab.classList.add("show");
+      // 提示访客这里能许愿（菜单提示条会随鼠标/触摸自动隐藏，但按钮常驻）
+      var hintEl = document.getElementById("hint");
+      if (hintEl) hintEl.textContent = "左下角「许个愿」会悄悄送到 Ta 的信箱";
+      fab.addEventListener("click", function () {
+        form.style.display = "";
+        done.style.display = "none";
+        mask.classList.add("show");
+        setTimeout(function () { text.focus(); }, 30);
+      });
+      document.getElementById("wish-cancel").addEventListener("click", function () {
+        mask.classList.remove("show");
+      });
+      mask.addEventListener("click", function (e) {
+        if (e.target === mask) mask.classList.remove("show");
+      });
+      text.addEventListener("input", function () { count.textContent = text.value.length; });
+      send.addEventListener("click", function () {
+        var content = text.value.trim();
+        if (!content || send.disabled) return;
+        send.disabled = true;
+        send.textContent = "发送中…";
+        fetch("/api/wishes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            slug: cardSlug,
+            sender: nameInput.value.trim(),
+            content: content
+          })
+        }).then(function (res) {
+          if (res.status === 404) throw new Error("gone");
+          if (res.status === 429) throw new Error("busy");
+          if (!res.ok) throw new Error("bad");
+          text.value = "";
+          nameInput.value = "";
+          count.textContent = "0";
+          form.style.display = "none";
+          done.innerHTML = '<div class="wish-done"><div class="big">✦</div>愿望已送到 Ta 的信箱里啦<br>' +
+            '<span style="font-size:12px;color:#8b8175">只有 Ta 打开信箱时才能看到</span></div>';
+          done.style.display = "";
+        }).catch(function (err) {
+          var msg = "发送失败，再试一次";
+          if (err && err.message === "gone") msg = "这个祝福链接已失效";
+          else if (err && err.message === "busy") msg = "许愿的人太多啦，稍后再试";
+          send.textContent = msg;
+          setTimeout(function () { send.textContent = "发送愿望"; }, 2400);
+        }).then(function () {
+          send.disabled = false;
+          if (send.textContent === "发送中…") send.textContent = "发送愿望";
+        });
+      });
+    }
+
+    function start() {
+      if (!cfg.template || !registry[cfg.template]) cfg.template = "galaxy";
+      var tpl = registry[cfg.template];
+      document.title = (cfg.name ? cfg.name + "，" : "") + "生日快乐";
+
+      if (tpl.kind === "iframe") {
+        canvas.classList.add("hidden");
+        frame.classList.add("show");
+        frame.classList.add("enter");
+        // sid：把短链 id 透传进模板，模板内自带的许愿框才能把愿望送进信箱
+        frame.src = BR.embedSrc(tpl, cfg, cardSlug ? "sid=" + encodeURIComponent(cardSlug) : "");
+      } else {
+        canvas.classList.remove("hidden");
+        canvas.classList.add("enter");
+        frame.classList.remove("show");
+        function tick(now) {
+          BR.renderTo(canvas, tpl, cfg, now / 1000);
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      }
+
+      // 音乐
+      player.setConfig(cfg.music);
+      refreshMusicBtn();
+      initWish();
+      var enterMask = document.getElementById("enter-mask");
+      var hasMusic = cfg.music && cfg.music.enabled && cfg.music.source !== "none";
+      function launchWishIntro() {
+        if (window.BirthdayWishIntro && window.BirthdayWishIntro.shouldPlay(tpl)) {
+          window.BirthdayWishIntro.play({ cfg: cfg, templateName: tpl.name });
+        }
+      }
+      if (hasMusic) {
+        enterMask.classList.add("show");
+      } else {
+        launchWishIntro();
+      }
+      enterMask.addEventListener("click", function () {
+        enterMask.classList.remove("show");
+        player.play().then(refreshMusicBtn).catch(refreshMusicBtn);
+        launchWishIntro();
+      }, { once: true });
+
+      musicBtn.addEventListener("click", function () {
+        player.toggle().then(refreshMusicBtn).catch(refreshMusicBtn);
+      });
+
+      // 菜单自动隐藏
+      var bar = document.getElementById("bar");
+      var hint = document.getElementById("hint");
+      var timer;
+      function show() {
+        bar.classList.remove("hidden"); hint.classList.remove("hidden");
+        document.body.style.cursor = "";
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          bar.classList.add("hidden"); hint.classList.add("hidden");
+          document.body.style.cursor = "none";
+        }, 3000);
+      }
+      window.addEventListener("mousemove", show);
+      window.addEventListener("touchstart", show);
+      show();
+
+      // 二维码
+      var link = location.href;
+      document.getElementById("btn-qr").addEventListener("click", function () {
+        var box = document.getElementById("qr-box");
+        box.innerHTML = "";
+        document.getElementById("qr-link").textContent = link;
+        new QRCode(box, { text: link, width: 200, height: 200,
+          colorDark: "#2b2722", colorLight: "#fffdf8", correctLevel: QRCode.CorrectLevel.M });
+        document.getElementById("qr-mask").classList.add("show");
+      });
+      document.getElementById("qr-close").addEventListener("click", function () {
+        document.getElementById("qr-mask").classList.remove("show");
+      });
+      document.getElementById("btn-copy").addEventListener("click", function () {
+        navigator.clipboard.writeText(link).then(function () {
+          var b = document.getElementById("btn-copy");
+          var old = b.textContent; b.textContent = "已复制"; setTimeout(function(){b.textContent = old;}, 1500);
+        });
+      });
+    }
+
+    resolve();
+  })();
+  </script>
+</body>
+</html>

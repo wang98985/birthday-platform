@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.git/
+cards.db
+backups/
+templates_store.json
+static/uploads/
+.venv/
