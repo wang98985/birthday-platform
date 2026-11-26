@@ -55,6 +55,13 @@
     padding: 1px 7px; border-radius: 999px; background: var(--accent);
     color: #fffdf8; font-size: 10px;
   }
+  .new-tip {
+    position: fixed; left: 50%; top: 16px; transform: translateX(-50%);
+    border: none; border-radius: 999px; padding: 9px 18px; font-size: 13px;
+    background: var(--accent); color: #fffdf8; cursor: pointer; z-index: 10;
+    box-shadow: 0 6px 18px rgba(0,0,0,.18); display: none;
+  }
+  .new-tip.show { display: block; }
 </style>
 </head>
 <body>
@@ -76,6 +83,7 @@
   <ul id="list"></ul>
 </div>
 <div class="toast" id="toast"></div>
+<button class="new-tip" id="new-tip" type="button"></button>
 
 <script>
 (function () {
@@ -107,6 +115,31 @@
     listEl.innerHTML = "";
   }
 
+  var lastCount = 0;
+  var pollingStopped = false;
+  var tipEl = document.getElementById("new-tip");
+
+  function hideNewTip() { tipEl.classList.remove("show"); }
+
+  // 轮询只看条数，不打断阅读；有新愿望时提示，点击才加载
+  function pollNew() {
+    if (pollingStopped || document.hidden || !slug || !key) return;
+    fetch("/api/wishes?slug=" + encodeURIComponent(slug) +
+          "&key=" + encodeURIComponent(key) + "&count=1")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d) return;
+        var diff = (d.count || 0) - lastCount;
+        if (diff > 0) {
+          tipEl.textContent = "收到 " + diff + " 条新愿望 · 点击查看";
+          tipEl.classList.add("show");
+        } else if (diff < 0) {
+          lastCount = d.count || 0;
+        }
+      })
+      .catch(function () {});
+  }
+
   if (!slug || !key) {
     setIdle("这个信箱链接不完整。<br>请使用分享时给出的完整链接（结尾带 <b>#k=…</b> 凭证）。<br>凭证相当于钥匙，只保存在你自己的设备上。");
     return;
@@ -123,6 +156,8 @@
         return res.json();
       })
       .then(function (data) {
+        lastCount = data.count || 0;
+        hideNewTip();
         var name = data.name || "Ta";
         titleEl.textContent = "";
         titleEl.appendChild(document.createTextNode("给 "));
@@ -219,6 +254,8 @@
     fetch("/api/cards/" + encodeURIComponent(slug) + "?key=" + encodeURIComponent(key),
       { method: "DELETE" }).then(function (r) {
       if (!r.ok && r.status !== 404) throw new Error("HTTP " + r.status);
+      pollingStopped = true;
+      hideNewTip();
       try {
         var saved = JSON.parse(localStorage.getItem("bday_inboxes") || "[]");
         if (Array.isArray(saved)) {
@@ -240,6 +277,11 @@
     }).catch(function () { toast("删除失败，请稍后重试"); });
   });
   document.getElementById("btn-home").addEventListener("click", function () { location.href = "/"; });
+  tipEl.addEventListener("click", function () { hideNewTip(); load(); });
+  setInterval(pollNew, 30000);
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) pollNew();
+  });
 
   load();
 })();
