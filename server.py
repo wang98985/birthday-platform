@@ -18,10 +18,11 @@ import secrets
 import hmac
 import string
 import sqlite3
+import traceback
 from threading import Lock
 
 from flask import (
-    Flask, request, jsonify, send_from_directory, abort, Response
+    Flask, request, jsonify, send_from_directory, send_file, abort, Response
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +32,22 @@ DB_PATH = os.environ.get("DATABASE_PATH") or os.path.join(BASE_DIR, "cards.db")
 DB_BACKUP_DIR = os.path.join(os.path.dirname(DB_PATH), "backups")
 BACKUP_KEEP = 7
 UPLOAD_MUSIC_DIR = os.path.join(STATIC_DIR, "uploads", "music")
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+
+
+def _load_admin_key():
+    """管理口令：优先环境变量 ADMIN_KEY，其次项目根目录 admin_key.txt（已被 .gitignore 忽略）。"""
+    key = os.environ.get("ADMIN_KEY", "").strip()
+    if key:
+        return key
+    try:
+        with open(os.path.join(BASE_DIR, "admin_key.txt"), "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+ADMIN_KEY = _load_admin_key()
 
 SLUG_CHARS = string.ascii_letters + string.digits
 SLUG_LEN = 6
@@ -107,7 +124,9 @@ EFFECTS = {
 
 # 音乐上传限制
 MUSIC_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".aac"}
-MUSIC_MAX_BYTES = 15 * 1024 * 1024  # 15MB
+MUSIC_MAX_BYTES = 15 * 1024 * 1024  # 单文件 15MB
+MUSIC_QUOTA_FILES = 100             # 全站最多保留 100 个音乐文件
+MUSIC_QUOTA_BYTES = 150 * 1024 * 1024  # 全站音乐总量 150MB
 
 # ---------------- 自定义模板存储 ----------------
 TEMPLATES_STORE = os.path.join(BASE_DIR, "templates_store.json")
@@ -183,7 +202,8 @@ RATE_MAX = 40          # 每窗口最多创建次数
 
 # ---------------- DB ----------------
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    # timeout：并发写入时等锁，避免直接抛 database is locked
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -244,6 +264,14 @@ def init_db():
         if "sender" not in wcols:
             conn.execute("ALTER TABLE wishes ADD COLUMN sender TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_wishes_slug ON wishes(slug)")
+        # 元信息表：记录 schema 版本，后续加字段/迁移时据此判断
+        conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
+        conn.execute("INSERT OR IGNORE INTO meta(k, v) VALUES('schema_version', '2')")
+        # WAL：读写并发更好，静态资源与 API 同时访问时不易互相阻塞
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.DatabaseError:
+            pass
         # 本次功能上线前生成的短链没有主人凭证：自动补发，并在控制台给出信箱链接
         legacy = conn.execute(
             "SELECT slug FROM cards WHERE owner_key IS NULL OR owner_key=''"
@@ -258,6 +286,25 @@ def init_db():
 
 def gen_slug():
     return "".join(random.choices(SLUG_CHARS, k=SLUG_LEN))
+
+
+def log_error(text):
+    """把未捕获异常写入 logs/error.log，便于线上排查（写失败不影响请求）。"""
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        with open(os.path.join(LOG_DIR, "error.log"), "a", encoding="utf-8") as f:
+            f.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
+    except OSError:
+        pass
+
+
+@app.errorhandler(Exception)
+def handle_uncaught(exc):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(exc, HTTPException):
+        return exc
+    log_error(traceback.format_exc())
+    return jsonify({"error": "server_error"}), 500
 
 
 def gen_owner_key():
@@ -346,6 +393,31 @@ def sanitize_config(raw):
     return cfg
 
 
+# ---------------- 静态 HTML 缓存 ----------------
+_html_cache = {}
+_html_cache_lock = Lock()
+
+
+def read_html_cached(path):
+    """进程内缓存静态 HTML（按 mtime 失效），避免大模板每次请求都读盘。"""
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    with _html_cache_lock:
+        item = _html_cache.get(path)
+        if item and item[0] == mtime:
+            return item[1]
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except OSError:
+        return None
+    with _html_cache_lock:
+        _html_cache[path] = (mtime, html)
+    return html
+
+
 # ---------------- 路由 ----------------
 @app.route("/")
 def index():
@@ -359,8 +431,37 @@ def view_page():
 
 @app.route("/c/<slug>")
 def card_short(slug):
-    # 短链入口：交给前端观看页，由前端拉取配置
-    return send_from_directory(STATIC_DIR, "view.html")
+    # 短链入口：服务端注入 og 信息（微信/QQ 等分享卡片有标题和描述），页面仍由前端拉取配置
+    page = read_html_cached(os.path.join(STATIC_DIR, "view.html"))
+    if not page:
+        return send_from_directory(STATIC_DIR, "view.html")
+    if not valid_slug(slug):
+        return Response(page, mimetype="text/html; charset=utf-8")
+    conn = get_db()
+    row = conn.execute("SELECT config FROM cards WHERE slug=?", (slug,)).fetchone()
+    conn.close()
+    if not row:
+        return Response(page, mimetype="text/html; charset=utf-8")
+    try:
+        cfg = json.loads(row["config"]) or {}
+    except (ValueError, TypeError):
+        cfg = {}
+    name = str(cfg.get("name") or "").strip()
+    title = (name + "，生日快乐") if name else "生日快乐"
+    desc = " ".join(str(cfg.get("wish") or "").split())[:90] or "一份藏在代码里的生日祝福，点开看看"
+    tags = (
+        '<meta property="og:title" content="%s" />'
+        '<meta property="og:description" content="%s" />'
+        '<meta property="og:type" content="website" />'
+        '<meta property="og:url" content="%s" />'
+        '<meta name="description" content="%s" />'
+    ) % (
+        html_mod.escape(title), html_mod.escape(desc),
+        html_mod.escape(request.url), html_mod.escape(desc),
+    )
+    page = page.replace("<title>生日快乐</title>",
+                        "<title>%s</title>" % html_mod.escape(title), 1)
+    return Response(inject_head(page, tags), mimetype="text/html; charset=utf-8")
 
 
 @app.route("/api/health")
@@ -415,6 +516,61 @@ def get_card(slug):
     if not row:
         return jsonify({"error": "not_found"}), 404
     return Response(row["config"], mimetype="application/json")
+
+
+@app.route("/api/cards/<slug>", methods=["PUT"])
+def update_card(slug):
+    """更新已有短链的配置（需主人凭证），避免每次分享都新建一个链接。"""
+    if not valid_slug(slug):
+        abort(404)
+    raw = request.get_json(silent=True) or {}
+    key = str(raw.get("ownerKey") or request.headers.get("X-Owner-Key") or "")
+    body = raw.get("config") if isinstance(raw.get("config"), dict) else raw
+    cfg = sanitize_config(body)
+    with _db_lock:
+        conn = get_db()
+        row = conn.execute("SELECT owner_key FROM cards WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            conn.close()
+            return jsonify({"error": "not_found"}), 404
+        if not _owner_ok(row["owner_key"], key):
+            conn.close()
+            return jsonify({"error": "forbidden"}), 403
+        owner = row["owner_key"]
+        conn.execute("UPDATE cards SET config=? WHERE slug=?",
+                     (json.dumps(cfg, ensure_ascii=False), slug))
+        conn.commit()
+        conn.close()
+    base = request.host_url.rstrip("/")
+    return jsonify({
+        "slug": slug,
+        "url": f"{base}/c/{slug}",
+        "ownerKey": owner,
+        "inboxUrl": f"{base}/inbox/{slug}#k={owner}",
+        "config": cfg,
+    })
+
+
+@app.route("/api/cards/<slug>", methods=["DELETE"])
+def delete_card(slug):
+    """删除卡片（需主人凭证）：链接失效，收到的愿望一并清除。"""
+    if not valid_slug(slug):
+        abort(404)
+    key = request.args.get("key") or request.headers.get("X-Owner-Key") or ""
+    with _db_lock:
+        conn = get_db()
+        row = conn.execute("SELECT owner_key FROM cards WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            conn.close()
+            return jsonify({"error": "not_found"}), 404
+        if not _owner_ok(row["owner_key"], key):
+            conn.close()
+            return jsonify({"error": "forbidden"}), 403
+        conn.execute("DELETE FROM wishes WHERE slug=?", (slug,))
+        conn.execute("DELETE FROM cards WHERE slug=?", (slug,))
+        conn.commit()
+        conn.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/inbox/<slug>")
@@ -527,6 +683,28 @@ def list_wishes():
     })
 
 
+@app.route("/api/wishes/<int:wid>", methods=["DELETE"])
+def delete_wish(wid):
+    """主人删除单条愿望：需 slug + 主人凭证。"""
+    slug = request.args.get("slug", "")
+    key = request.args.get("key", "")
+    if not valid_slug(slug):
+        return jsonify({"error": "bad_slug"}), 400
+    with _db_lock:
+        conn = get_db()
+        row = conn.execute("SELECT owner_key FROM cards WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            conn.close()
+            return jsonify({"error": "not_found"}), 404
+        if not _owner_ok(row["owner_key"], key):
+            conn.close()
+            return jsonify({"error": "forbidden"}), 403
+        conn.execute("DELETE FROM wishes WHERE id=? AND slug=?", (wid, slug))
+        conn.commit()
+        conn.close()
+    return jsonify({"ok": True})
+
+
 def _is_local():
     """请求是否来自本机（主人自己开的浏览器）。
 
@@ -542,38 +720,73 @@ def _is_local():
     return _is_loopback(xff.split(",")[0].strip())
 
 
+def _key_matches(supplied):
+    if not supplied:
+        return False
+    try:
+        return hmac.compare_digest(str(supplied), ADMIN_KEY)
+    except TypeError:
+        return False
+
+
+def admin_blocked():
+    """管理操作鉴权。
+
+    未配置 ADMIN_KEY：保持老行为，仅本机可操作；
+    配置后：必须带 X-Admin-Key 头（或 ?key= 参数）。
+    返回 None 表示放行，否则返回错误响应。
+    """
+    if not ADMIN_KEY:
+        if _is_local():
+            return None
+        return jsonify({"error": "admin_disabled"}), 403
+    supplied = request.headers.get("X-Admin-Key") or request.args.get("key", "")
+    if _key_matches(supplied):
+        return None
+    return jsonify({"error": "admin_required"}), 401
+
+
+def _owner_ok(stored, supplied):
+    """卡片主人凭证校验（恒定时间比较）。"""
+    if not stored or not supplied:
+        return False
+    try:
+        return hmac.compare_digest(str(stored), str(supplied))
+    except TypeError:
+        return False
+
+
 @app.route("/api/inboxes")
 def list_inboxes():
-    """本机专用：列出全部信箱（含本次升级前旧短链补发的凭证），便于找回。"""
-    if not _is_local():
-        return jsonify({"error": "forbidden"}), 403
+    """管理接口：列出全部信箱（含本次升级前旧短链补发的凭证），便于找回。"""
+    denied = admin_blocked()
+    if denied:
+        return denied
     with _db_lock:
         conn = get_db()
+        # 一条 SQL 取齐：避免对每张卡单独查两次愿望数（N+1）
         rows = conn.execute(
-            "SELECT slug, config, owner_key, last_read_id FROM cards ORDER BY created_at DESC"
+            "SELECT c.slug, c.config, c.owner_key, c.last_read_id,"
+            " (SELECT COUNT(*) FROM wishes w WHERE w.slug=c.slug) AS cnt,"
+            " (SELECT COUNT(*) FROM wishes w WHERE w.slug=c.slug AND w.id > COALESCE(c.last_read_id,0)) AS unread"
+            " FROM cards c WHERE c.owner_key IS NOT NULL AND c.owner_key != ''"
+            " ORDER BY c.created_at DESC"
         ).fetchall()
         out = []
         base = request.host_url.rstrip("/")
         for r in rows:
-            if not r["owner_key"]:
-                continue
             name = ""
             try:
                 name = (json.loads(r["config"]) or {}).get("name", "")
             except (ValueError, TypeError):
                 pass
-            cnt = conn.execute("SELECT COUNT(*) AS c FROM wishes WHERE slug=?",
-                               (r["slug"],)).fetchone()["c"]
-            unread = conn.execute(
-                "SELECT COUNT(*) AS c FROM wishes WHERE slug=? AND id>?",
-                (r["slug"], r["last_read_id"] or 0)).fetchone()["c"]
             out.append({
                 "slug": r["slug"],
                 "name": name,
                 "url": "%s/c/%s" % (base, r["slug"]),
                 "inboxUrl": "%s/inbox/%s#k=%s" % (base, r["slug"], r["owner_key"]),
-                "count": cnt,
-                "unread": unread,
+                "count": r["cnt"],
+                "unread": r["unread"],
             })
         conn.close()
     return jsonify({"inboxes": out})
@@ -581,12 +794,13 @@ def list_inboxes():
 
 @app.route("/api/db/export")
 def export_db():
-    """本机专用：下载整个 cards.db，换机器时跟项目一起带走即可。"""
-    if not _is_local():
-        abort(403)
-    resp = send_from_directory(BASE_DIR, "cards.db", as_attachment=True)
-    resp.headers["Content-Disposition"] = 'attachment; filename="cards.db"'
-    return resp
+    """管理接口：下载整个 cards.db，换机器时跟项目一起带走即可。"""
+    denied = admin_blocked()
+    if denied:
+        return denied
+    if not os.path.isfile(DB_PATH):
+        abort(404)
+    return send_file(DB_PATH, as_attachment=True, download_name="cards.db")
 
 
 # ---------------- iframe 模板嵌入 ----------------
@@ -849,8 +1063,9 @@ def build_hbcake_page(platform_cfg, html_path):
     cfg_json = json_for_script(platform_cfg)
     head = ("<script>window.__CFG__=" + cfg_json +
             ";document.title=" + json_for_script(title) + ";</script>")
-    with open(html_path, "r", encoding="utf-8") as f:
-        html = f.read()
+    html = read_html_cached(html_path)
+    if html is None:
+        abort(404)
     html = inject_head(html, head)
     html = inject_body_end(html, HBCAKE_APPLY)
     return Response(html, mimetype="text/html; charset=utf-8")
@@ -957,8 +1172,9 @@ def embed_template(name):
             merged_cfg = merge_hb_config(platform_cfg, load_default_hb())
         shim = build_shim(name, platform_cfg, merged_cfg)
         base_tag = ('<base href="' + meta["base"] + '">') if meta["base"] else ""
-        with open(html_path, "r", encoding="utf-8") as f:
-            html = f.read()
+        html = read_html_cached(html_path)
+        if html is None:
+            abort(404)
         return Response(inject_head(html, base_tag + shim),
                         mimetype="text/html; charset=utf-8")
 
@@ -976,8 +1192,9 @@ def embed_template(name):
         "<script>window.__CFG__=" + json_for_script(platform_cfg) +
         ";document.title=" + json_for_script(title) + ";</script>"
     )
-    with open(html_path, "r", encoding="utf-8") as f:
-        html = f.read()
+    html = read_html_cached(html_path)
+    if html is None:
+        abort(404)
     return Response(inject_head(html, inject),
                     mimetype="text/html; charset=utf-8")
 
@@ -1004,6 +1221,9 @@ def list_templates():
 
 @app.route("/api/templates", methods=["POST"])
 def create_template():
+    denied = admin_blocked()
+    if denied:
+        return denied
     ip = _client_ip()
     if not rate_ok(ip):
         return jsonify({"error": "rate_limited", "retry_after": RATE_WINDOW}), 429
@@ -1070,6 +1290,9 @@ def create_template():
                             "allowed": sorted(MUSIC_EXTS)}), 400
         if err == "too_large":
             return jsonify({"error": "music_too_large", "max_mb": 15}), 400
+        if err == "quota":
+            return jsonify({"error": "music_quota", "max_files": MUSIC_QUOTA_FILES,
+                            "max_mb": 150}), 400
         if info:
             music["url"] = info["url"]
             music["source"] = "upload"
@@ -1082,6 +1305,9 @@ def create_template():
 
 @app.route("/api/templates/<tid>", methods=["DELETE"])
 def delete_template(tid):
+    denied = admin_blocked()
+    if denied:
+        return denied
     store = load_tpl_store()
     custom = next((t for t in store["custom"] if t.get("id") == tid), None)
     if custom:
@@ -1105,6 +1331,9 @@ def delete_template(tid):
 
 @app.route("/api/templates/restore", methods=["POST"])
 def restore_templates():
+    denied = admin_blocked()
+    if denied:
+        return denied
     store = load_tpl_store()
     store["hidden"] = []
     save_tpl_store(store)
@@ -1112,6 +1341,21 @@ def restore_templates():
 
 
 # ---------------- 音乐上传 ----------------
+def music_usage():
+    """已上传音乐的文件数与总字节数，用于全站配额。"""
+    count = 0
+    total = 0
+    try:
+        for name in os.listdir(UPLOAD_MUSIC_DIR):
+            p = os.path.join(UPLOAD_MUSIC_DIR, name)
+            if os.path.isfile(p):
+                count += 1
+                total += os.path.getsize(p)
+    except OSError:
+        pass
+    return count, total
+
+
 def save_music_file(f):
     """校验并保存上传的音乐文件，返回 (info, error)。"""
     if not f or not f.filename:
@@ -1122,6 +1366,9 @@ def save_music_file(f):
     data = f.read(MUSIC_MAX_BYTES + 1)
     if len(data) > MUSIC_MAX_BYTES:
         return None, "too_large"
+    count, total = music_usage()
+    if count >= MUSIC_QUOTA_FILES or total + len(data) > MUSIC_QUOTA_BYTES:
+        return None, "quota"
     os.makedirs(UPLOAD_MUSIC_DIR, exist_ok=True)
     fname = gen_slug() + gen_slug() + ext  # 12 位随机名，防猜测
     with open(os.path.join(UPLOAD_MUSIC_DIR, fname), "wb") as out:
@@ -1131,6 +1378,9 @@ def save_music_file(f):
 
 @app.route("/api/upload/music", methods=["POST"])
 def upload_music():
+    denied = admin_blocked()
+    if denied:
+        return denied
     ip = _client_ip()
     if not rate_ok(ip):
         return jsonify({"error": "rate_limited",
@@ -1144,10 +1394,19 @@ def upload_music():
         return jsonify({"error": "bad_ext", "allowed": sorted(MUSIC_EXTS)}), 400
     if err == "too_large":
         return jsonify({"error": "too_large", "max_mb": 15}), 400
+    if err == "quota":
+        return jsonify({"error": "quota", "max_files": MUSIC_QUOTA_FILES,
+                        "max_mb": 150}), 400
     return jsonify(info), 201
 
 
 # 静态资源（js/css/图片等）
+# 静态资源缓存策略：媒体长期缓存，js/css 短缓存，HTML 不缓存
+CACHE_LONG_EXTS = {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".png", ".jpg", ".jpeg",
+                   ".gif", ".webp", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".otf"}
+CACHE_SHORT_EXTS = {".js", ".css"}
+
+
 @app.route("/<path:filename>")
 def static_files(filename):
     # 安全：只允许 static 目录内的文件（用 commonpath 防 ../ 越界）
@@ -1158,7 +1417,15 @@ def static_files(filename):
     except ValueError:
         inside = False
     if inside and os.path.isfile(full):
-        return send_from_directory(STATIC_DIR, filename)
+        resp = send_from_directory(STATIC_DIR, filename, conditional=True)
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in CACHE_LONG_EXTS:
+            resp.headers["Cache-Control"] = "public, max-age=604800"
+        elif ext in CACHE_SHORT_EXTS:
+            resp.headers["Cache-Control"] = "public, max-age=600"
+        else:
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
     abort(404)
 
 

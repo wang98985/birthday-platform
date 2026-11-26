@@ -68,6 +68,13 @@
       iframe.setAttribute("allow", "autoplay; fullscreen");
       hostEl.appendChild(iframe);
     }
+    // 自定义 HTML 模板运行在独立沙箱里：禁用 allow-same-origin，
+    // 使其拿不到本站 localStorage / Cookie，避免读出主人凭证。
+    if (tpl.sandbox) {
+      iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
+    } else {
+      iframe.removeAttribute("sandbox");
+    }
     iframe.src = embedSrc(tpl, cfgObj, extra);
     return iframe;
   }

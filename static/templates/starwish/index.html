@@ -1529,6 +1529,8 @@ function updateMusicBtn() {
   initLetter();
   initFlow();
   updateMusicBtn();
+  // 平台编辑器内预览：?nointro=1 时跳过「轻触进入 + 翻牌开场」，直接展示蛋糕页
+  if (/[?&]nointro=1/.test(location.search)) goTo("cake");
 })();
 </script>
 

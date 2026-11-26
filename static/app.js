@@ -91,7 +91,9 @@
 
   // 编辑器内预览跳过模板自带开场，避免每次改文案都重播
   function editorEmbedQuery(tpl) {
-    return tpl && tpl.id === "hbcake" ? "nointro=1" : "";
+    if (!tpl) return "";
+    if (tpl.id === "hbcake" || tpl.id === "starwish") return "nointro=1";
+    return "";
   }
 
   // ---------- 模板库 ----------
@@ -122,7 +124,7 @@
         registry[c.id] = {
           id: c.id, name: c.name || "自定义模板",
           desc: c.desc || "自定义 HTML 模板", kind: "iframe",
-          embedUrl: "/embed/" + c.id, custom: true,
+          embedUrl: "/embed/" + c.id, custom: true, sandbox: true,
           defaultMusic: c.music || null
         };
       } else if (c.kind === "effect" && c.effect) {
@@ -382,7 +384,7 @@
       : "确定从模板库移除「" + tpl.name + "」？内置模板可一键恢复，已生成的链接不受影响。";
     if (!window.confirm(msg)) return;
     try {
-      const res = await fetch("/api/templates/" + encodeURIComponent(id), { method: "DELETE" });
+      const res = await adminFetch("/api/templates/" + encodeURIComponent(id), { method: "DELETE" });
       // 404 表示已被删除（如其他标签页操作），视为成功
       if (!res.ok && res.status !== 404) { toast("删除失败"); return; }
       if (isCustom) {
@@ -491,7 +493,7 @@
     const btn = $("t-submit");
     btn.disabled = true; btn.textContent = "添加中…";
     try {
-      const res = await fetch("/api/templates", { method: "POST", body: fd });
+      const res = await adminFetch("/api/templates", { method: "POST", body: fd });
       const data = await res.json().catch(function () { return {}; });
       if (!res.ok) {
         errEl.textContent = "添加失败：" + (data && data.error ? data.error : "未知错误");
@@ -709,7 +711,7 @@
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch("/api/upload/music", { method: "POST", body: fd });
+      const res = await adminFetch("/api/upload/music", { method: "POST", body: fd });
       if (res.status === 429) { toast("上传过于频繁，请稍后再试"); nameEl.textContent = "未上传"; return; }
       const data = await res.json();
       if (data && data.url) {
@@ -723,7 +725,8 @@
         toast("音乐上传成功");
       } else {
         nameEl.textContent = "未上传";
-        toast("上传失败：" + (data && data.error ? data.error : "未知错误"));
+        toast(data && data.error === "quota" ? "音乐空间已满，暂时无法上传" :
+          ("上传失败：" + (data && data.error ? data.error : "未知错误")));
       }
     } catch (err) {
       nameEl.textContent = "未上传";
@@ -734,6 +737,45 @@
   // ---------- 愿望信箱（主人侧） ----------
   const INBOX_STORE = "bday_inboxes";
   const SHARE_STORE = "bday_last_share";
+  const ADMIN_STORE = "bday_admin_key";
+
+  // ---------- 管理口令 ----------
+  function getAdminKey() {
+    try { return localStorage.getItem(ADMIN_STORE) || ""; } catch (e) { return ""; }
+  }
+  function setAdminKey(k) {
+    try {
+      if (k) localStorage.setItem(ADMIN_STORE, k);
+      else localStorage.removeItem(ADMIN_STORE);
+    } catch (e) {}
+  }
+  function askAdminKey() {
+    const v = window.prompt("请输入管理口令（服务端 ADMIN_KEY）");
+    return v ? v.trim() : "";
+  }
+  // 管理接口统一请求：自动附带口令；401 时按需提示输入并重试一次
+  async function adminFetch(url, opts, allowPrompt) {
+    opts = opts || {};
+    const send = function (key) {
+      const o = Object.assign({}, opts);
+      o.headers = Object.assign({}, opts.headers || {});
+      if (key) o.headers["X-Admin-Key"] = key;
+      return fetch(url, o);
+    };
+    let res = await send(getAdminKey());
+    if (res.status === 403) {
+      if (allowPrompt !== false) toast("该管理功能未开启（需在服务端设置 ADMIN_KEY）");
+      return res;
+    }
+    if (res.status === 401 && allowPrompt !== false) {
+      const input = askAdminKey();
+      if (!input) return res;
+      setAdminKey(input);
+      res = await send(input);
+      if (res.status === 401) toast("管理口令不正确");
+    }
+    return res;
+  }
 
   function loadInboxes() {
     try {
@@ -754,12 +796,19 @@
     try { localStorage.setItem(SHARE_STORE, JSON.stringify(entry)); } catch (e) {}
   }
 
-  // 内容没变就复用同一个短链，避免每次分享都新开一个信箱
-  function rememberedShareFor(c) {
+  // 上一次生成的短链（不看内容是否变化），用于原地更新 / 删除
+  function lastShareMeta() {
     try {
       const s = JSON.parse(localStorage.getItem(SHARE_STORE) || "null");
-      if (s && s.fp === JSON.stringify(c) && s.slug && s.url && s.inboxUrl) return s;
+      if (s && s.slug && s.url && s.inboxUrl) return s;
     } catch (e) {}
+    return null;
+  }
+
+  // 内容没变就复用同一个短链，避免每次分享都新开一个信箱
+  function rememberedShareFor(c) {
+    const s = lastShareMeta();
+    if (s && s.fp === JSON.stringify(c)) return s;
     return null;
   }
 
@@ -807,7 +856,7 @@
     const badge = $("nav-inbox-badge");
     if (!badge) return;
     try {
-      const res = await fetch("/api/inboxes");
+      const res = await adminFetch("/api/inboxes", {}, false);
       if (!res.ok) return;
       const data = await res.json();
       const unread = (data.inboxes || []).reduce(function (n, x) {
@@ -825,7 +874,7 @@
     let list = loadInboxes();
     // 本机访问时并入服务端全部信箱：本次升级前的旧短链也能找回（远程访问会 403）
     try {
-      const res = await fetch("/api/inboxes");
+      const res = await adminFetch("/api/inboxes", {}, true);
       if (res.ok) {
         const data = await res.json();
         (data.inboxes || []).forEach(function (x) {
@@ -833,8 +882,8 @@
           if (!hit) list.push({ slug: x.slug, name: x.name || "", inboxUrl: x.inboxUrl, ts: 0 });
           else if (!hit.name && x.name) hit.name = x.name;
         });
-      } else if (res.status === 403) {
-        // 公网部署时本机专用接口不可用：隐藏同样会 403 的导出按钮
+      } else if (res.status === 403 || res.status === 401) {
+        // 公网部署时管理接口不可用：隐藏同样受限的导出按钮
         const box = $("db-export-block");
         if (box) box.style.display = "none";
       }
@@ -902,11 +951,16 @@
       data.slug + "（长期有效，可收愿望）";
     renderQR(data.url);
     showInbox(data);
-    rememberShare({ fp: JSON.stringify(cfg), slug: data.slug, url: data.url, inboxUrl: data.inboxUrl });
+    const del = $("btn-delete-card");
+    if (del) del.style.display = data.ownerKey ? "" : "none";
+    rememberShare({ fp: JSON.stringify(cfg), slug: data.slug, url: data.url,
+                    inboxUrl: data.inboxUrl, ownerKey: data.ownerKey || "" });
   }
 
   function openShare() {
     $("inbox-block").style.display = "none";
+    const del = $("btn-delete-card");
+    if (del) del.style.display = "none";
     currentLink = instantLink(cfg);
     $("link-input").value = currentLink;
     renderQR(currentLink);
@@ -921,10 +975,27 @@
     saveShortLink();
   }
 
+  // 优先沿用上一次的短链（原地更新内容），失败再新建，避免每次分享都生成新链接
   async function saveShortLink() {
     const btn = $("btn-save-short");
     btn.disabled = true; btn.textContent = "保存中…";
     try {
+      const prev = lastShareMeta();
+      if (prev && prev.ownerKey) {
+        try {
+          const up = await fetch("/api/cards/" + encodeURIComponent(prev.slug), {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ownerKey: prev.ownerKey, config: cfg })
+          });
+          if (up.ok) {
+            const data = await up.json();
+            applyShared(data, true);
+            toast("已更新到原链接");
+            return;
+          }
+        } catch (e) { /* 更新失败则继续新建 */ }
+      }
       const res = await fetch("/api/cards", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -945,6 +1016,29 @@
       toast("保存失败：" + e.message);
     } finally {
       btn.disabled = false; btn.textContent = "重新生成链接";
+    }
+  }
+
+  // 删除当前分享的卡片：链接失效，收到的愿望一并删除
+  async function deleteCurrentCard() {
+    const prev = lastShareMeta();
+    if (!prev || !prev.ownerKey) { toast("没有可删除的短链"); return; }
+    if (!window.confirm("确定删除这张卡片？链接将失效，收到的愿望也会一并删除。")) return;
+    try {
+      const res = await fetch("/api/cards/" + encodeURIComponent(prev.slug) +
+        "?key=" + encodeURIComponent(prev.ownerKey), { method: "DELETE" });
+      if (!res.ok && res.status !== 404) { toast("删除失败"); return; }
+      try { localStorage.removeItem(SHARE_STORE); } catch (e) {}
+      try {
+        const list = loadInboxes().filter(function (x) { return x.slug !== prev.slug; });
+        localStorage.setItem(INBOX_STORE, JSON.stringify(list));
+      } catch (e) {}
+      $("btn-delete-card").style.display = "none";
+      $("inbox-block").style.display = "none";
+      $("short-note").textContent = "卡片已删除，当前链接仅作即时预览。";
+      toast("卡片已删除");
+    } catch (e) {
+      toast("删除失败：" + e.message);
     }
   }
 
@@ -1030,9 +1124,25 @@
     $("inbox-modal").addEventListener("click", e => {
       if (e.target.id === "inbox-modal") $("inbox-modal").classList.remove("active");
     });
-    $("btn-db-export").addEventListener("click", function () {
-      location.href = "/api/db/export";
+    $("btn-db-export").addEventListener("click", async function () {
+      try {
+        const res = await adminFetch("/api/db/export", {}, true);
+        if (!res.ok) { toast("导出失败：需要管理口令"); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "cards.db";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        toast("已导出 cards.db");
+      } catch (e) {
+        toast("导出失败：" + e.message);
+      }
     });
+    $("btn-delete-card").addEventListener("click", deleteCurrentCard);
 
     // 模板添加 / 删除 / 恢复
     $("btn-add-tpl").addEventListener("click", openAddTemplate);
@@ -1071,7 +1181,7 @@
     });
     $("btn-restore-tpl").addEventListener("click", async function () {
       try {
-        const res = await fetch("/api/templates/restore", { method: "POST" });
+        const res = await adminFetch("/api/templates/restore", { method: "POST" });
         if (!res.ok) { toast("恢复失败"); return; }
         await loadTemplates();
         buildGallery();

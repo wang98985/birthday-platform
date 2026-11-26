@@ -201,7 +201,7 @@
             if (c.kind === "iframe") {
               registry[c.id] = {
                 id: c.id, name: c.name || "自定义模板", desc: c.desc || "",
-                kind: "iframe", embedUrl: "/embed/" + c.id
+                kind: "iframe", embedUrl: "/embed/" + c.id, sandbox: true
               };
             } else if (c.kind === "effect" && c.effect) {
               registry[c.id] = {
@@ -347,6 +347,12 @@
         canvas.classList.add("hidden");
         frame.classList.add("show");
         frame.classList.add("enter");
+        // 自定义 HTML 模板放进沙箱：禁止同源，读不到本站 localStorage / Cookie
+        if (tpl.sandbox) {
+          frame.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
+        } else {
+          frame.removeAttribute("sandbox");
+        }
         // sid：把短链 id 透传进模板，模板内自带的许愿框才能把愿望送进信箱
         frame.src = BR.embedSrc(tpl, cfg, cardSlug ? "sid=" + encodeURIComponent(cardSlug) : "");
       } else {

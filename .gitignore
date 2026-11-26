@@ -1,9 +1,15 @@
 # 运行数据（不上传，避免泄露卡片与愿望）
 cards.db
 cards.db-journal
+cards.db-wal
+cards.db-shm
 backups/
 templates_store.json
 static/uploads/
+logs/
+
+# 管理口令（本地文件形式，绝不入库）
+admin_key.txt
 
 # Python
 __pycache__/
