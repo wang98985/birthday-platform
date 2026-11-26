@@ -444,15 +444,27 @@ def card_short(slug):
     name = str(cfg.get("name") or "").strip()
     title = (name + "，生日快乐") if name else "生日快乐"
     desc = " ".join(str(cfg.get("wish") or "").split())[:90] or "一份藏在代码里的生日祝福，点开看看"
+    base = request.host_url.rstrip("/")
+    # 站点在 HTTPS 反代后面时，request.host_url 可能是 http，统一升级为 https 再给分享爬虫
+    if base.startswith("http://") and not any(h in base for h in ("localhost", "127.0.0.1")):
+        base = "https://" + base[len("http://"):]
+    page_url = base + request.path
+    cover = base + "/og-cover.jpg"
     tags = (
         '<meta property="og:title" content="%s" />'
         '<meta property="og:description" content="%s" />'
         '<meta property="og:type" content="website" />'
         '<meta property="og:url" content="%s" />'
+        '<meta property="og:image" content="%s" />'
+        '<meta property="og:image:width" content="640" />'
+        '<meta property="og:image:height" content="400" />'
+        '<meta name="twitter:card" content="summary_large_image" />'
+        '<link rel="image_src" href="%s" />'
         '<meta name="description" content="%s" />'
     ) % (
         html_mod.escape(title), html_mod.escape(desc),
-        html_mod.escape(request.url), html_mod.escape(desc),
+        html_mod.escape(page_url), html_mod.escape(cover),
+        html_mod.escape(cover), html_mod.escape(desc),
     )
     page = page.replace("<title>生日快乐</title>",
                         "<title>%s</title>" % html_mod.escape(title), 1)

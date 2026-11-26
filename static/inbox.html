@@ -66,6 +66,7 @@
   <div class="toolbar">
     <button class="btn" id="btn-refresh">刷新</button>
     <button class="btn" id="btn-share">复制送 Ta 的链接</button>
+    <button class="btn" id="btn-edit">编辑这张卡片</button>
     <button class="btn" id="btn-home">返回首页</button>
   </div>
   <div class="legend" id="legend"><span class="chip">新</span>上次打开信箱之后收到的愿望</div>
@@ -196,6 +197,9 @@
     var link = location.origin + "/c/" + slug;
     navigator.clipboard.writeText(link).then(function () { toast("已复制送 Ta 的链接"); },
       function () { toast(link); });
+  });
+  document.getElementById("btn-edit").addEventListener("click", function () {
+    location.href = "/?edit=" + encodeURIComponent(slug) + "#k=" + encodeURIComponent(key);
   });
   document.getElementById("btn-home").addEventListener("click", function () { location.href = "/"; });
 

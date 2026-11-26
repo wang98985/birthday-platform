@@ -125,6 +125,7 @@ main { max-width: 1120px; margin: 0 auto; padding: 28px; }
   padding: 10px 12px; margin-bottom: 8px;
 }
 .inbox-name { font-size: 14px; }
+.inbox-acts { display: flex; gap: 8px; flex-shrink: 0; }
 .inbox-date { font-size: 11px; color: var(--ink-soft); margin-top: 3px; }
 .inbox-empty { font-size: 13px; color: var(--ink-soft); text-align: center; padding: 28px 10px; line-height: 1.9; }
 .inbox-manual { display: flex; gap: 8px; margin-top: 10px; }

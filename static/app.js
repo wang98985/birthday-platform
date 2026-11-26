@@ -912,8 +912,20 @@
         a.target = "_blank";
         a.rel = "noopener";
         a.textContent = "打开信箱";
+        const acts = document.createElement("div");
+        acts.className = "inbox-acts";
+        const parsed = parseInboxUrl(item.inboxUrl);
+        if (parsed) {
+          const edit = document.createElement("a");
+          edit.className = "btn small";
+          edit.href = "/?edit=" + encodeURIComponent(item.slug) +
+            "#k=" + encodeURIComponent(parsed.key);
+          edit.textContent = "编辑";
+          acts.appendChild(edit);
+        }
+        acts.appendChild(a);
         row.appendChild(info);
-        row.appendChild(a);
+        row.appendChild(acts);
         box.appendChild(row);
         if (idx < 10) fillInboxCount(row, item.inboxUrl);
       });
@@ -1019,6 +1031,42 @@
     }
   }
 
+  // 从 /?edit=<slug>#k=<ownerKey> 载入已有卡片继续编辑，分享时原地更新
+  async function tryLoadEditCard() {
+    const params = new URLSearchParams(location.search);
+    const slug = params.get("edit");
+    if (!slug || !/^[A-Za-z0-9]{4,12}$/.test(slug)) return;
+    let key = "";
+    const m = location.hash.match(/^#k=(.+)$/);
+    if (m) key = decodeURIComponent(m[1]);
+    if (!key) {
+      const prev = lastShareMeta();
+      if (prev && prev.slug === slug && prev.ownerKey) key = prev.ownerKey;
+    }
+    try {
+      const res = await fetch("/api/cards/" + encodeURIComponent(slug));
+      if (!res.ok) { toast("这张卡片不存在或已被删除"); return; }
+      const data = await res.json();
+      if (!data || typeof data !== "object") return;
+      cfg = Object.assign({}, defaultCfg, data);
+      cfg.music = Object.assign({}, defaultCfg.music, data.music || {});
+      const base = location.origin;
+      rememberShare({
+        fp: JSON.stringify(cfg), slug: slug,
+        url: base + "/c/" + slug,
+        inboxUrl: key ? base + "/inbox/" + slug + "#k=" + encodeURIComponent(key) : "",
+        ownerKey: key
+      });
+      // 地址栏不留主人凭证，避免误复制整条地址把钥匙发出去
+      try { history.replaceState(null, "", "/?edit=" + encodeURIComponent(slug)); } catch (e) {}
+      openEditor(cfg.template || "galaxy");
+      toast(key ? "已载入卡片，改完点生成分享链接即可更新" : "缺少主人凭证，分享时会新建链接");
+    } catch (e) {
+      toast("载入卡片失败：" + e.message);
+    }
+  }
+
+
   // 删除当前分享的卡片：链接失效，收到的愿望一并删除
   async function deleteCurrentCard() {
     const prev = lastShareMeta();
@@ -1085,6 +1133,7 @@
     buildGallery();
     buildFxGallery();
     bindForm();
+    await tryLoadEditCard();
     // 音乐浮动按钮挂到预览容器
     const previewWrap = $("preview").parentElement;
     musicCtrl = BM.attachControls(player, previewWrap);
