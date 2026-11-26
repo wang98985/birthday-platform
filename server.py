@@ -354,11 +354,20 @@ def gen_slug():
     return "".join(random.choices(SLUG_CHARS, k=SLUG_LEN))
 
 
+LOG_MAX_BYTES = 2 * 1024 * 1024  # 错误日志超过 2MB 就轮转，避免长期运行无限变大
+
+
 def log_error(text):
     """把未捕获异常写入 logs/error.log，便于线上排查（写失败不影响请求）。"""
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
-        with open(os.path.join(LOG_DIR, "error.log"), "a", encoding="utf-8") as f:
+        path = os.path.join(LOG_DIR, "error.log")
+        try:
+            if os.path.getsize(path) > LOG_MAX_BYTES:
+                os.replace(path, path + ".1")  # 只保留一份旧日志
+        except OSError:
+            pass
+        with open(path, "a", encoding="utf-8") as f:
             f.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
     except OSError:
         pass
@@ -528,9 +537,39 @@ def read_html_cached(path):
 
 
 # ---------------- 路由 ----------------
+def _public_base():
+    """对外访问地址：反代在 HTTPS 后面时 request.host_url 可能是 http，统一升级。"""
+    base = request.host_url.rstrip("/")
+    if base.startswith("http://") and not any(h in base for h in ("localhost", "127.0.0.1")):
+        base = "https://" + base[len("http://"):]
+    return base
+
+
 @app.route("/")
 def index():
-    return send_from_directory(STATIC_DIR, "index.html")
+    # 首页也注入 og 信息：分享站点到微信/QQ 时也能显示卡片预览
+    page = read_html_cached(os.path.join(STATIC_DIR, "index.html"))
+    if not page:
+        return send_from_directory(STATIC_DIR, "index.html")
+    base = _public_base()
+    title = "生日代码 · 在线生成平台"
+    desc = "选一个模板，填上人名、生日、祝福语，生成专属链接或二维码，把浪漫藏进代码里。"
+    cover = base + "/og-cover.jpg"
+    tags = (
+        '<meta property="og:title" content="%s" />'
+        '<meta property="og:description" content="%s" />'
+        '<meta property="og:type" content="website" />'
+        '<meta property="og:url" content="%s" />'
+        '<meta property="og:image" content="%s" />'
+        '<meta property="og:image:width" content="640" />'
+        '<meta property="og:image:height" content="400" />'
+        '<meta name="twitter:card" content="summary_large_image" />'
+        '<link rel="image_src" href="%s" />'
+    ) % (
+        html_mod.escape(title), html_mod.escape(desc),
+        html_mod.escape(base + "/"), html_mod.escape(cover), html_mod.escape(cover),
+    )
+    return Response(inject_head(page, tags), mimetype="text/html; charset=utf-8")
 
 
 @app.route("/view")
@@ -565,10 +604,7 @@ def card_short(slug):
     name = str(cfg.get("name") or "").strip()
     title = (name + "，生日快乐") if name else "生日快乐"
     desc = " ".join(str(cfg.get("wish") or "").split())[:90] or "一份藏在代码里的生日祝福，点开看看"
-    base = request.host_url.rstrip("/")
-    # 站点在 HTTPS 反代后面时，request.host_url 可能是 http，统一升级为 https 再给分享爬虫
-    if base.startswith("http://") and not any(h in base for h in ("localhost", "127.0.0.1")):
-        base = "https://" + base[len("http://"):]
+    base = _public_base()
     page_url = base + request.path
     cover = base + "/og-cover.jpg"
     tags = (

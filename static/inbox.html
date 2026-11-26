@@ -64,6 +64,8 @@
     box-shadow: 0 6px 18px rgba(0,0,0,.18); display: none;
   }
   .new-tip.show { display: block; }
+  .more-wrap { text-align: center; margin: 6px 0 12px; }
+  .more-wrap .btn { min-width: 180px; }
   @media (max-width: 520px) {
     body { padding: 18px 14px 48px; }
     h1 { font-size: 18px; }
@@ -82,6 +84,7 @@
   <div class="toolbar">
     <button class="btn" id="btn-refresh">刷新</button>
     <button class="btn" id="btn-read-all">一键已读</button>
+    <button class="btn" id="btn-export">导出</button>
     <button class="btn" id="btn-share">复制送 Ta 的链接</button>
     <button class="btn" id="btn-edit">编辑这张卡片</button>
     <button class="btn" id="btn-delete-inbox">删除信箱</button>
@@ -90,6 +93,7 @@
   <div class="legend" id="legend"><span class="chip">新</span>上次打开信箱之后收到的愿望</div>
   <div class="state" id="state">正在打开信箱…</div>
   <ul id="list"></ul>
+  <div class="more-wrap"><button class="btn" id="btn-more" type="button" hidden></button></div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <button class="new-tip" id="new-tip" type="button"></button>
@@ -122,11 +126,20 @@
     stateEl.style.display = "";
     stateEl.innerHTML = text;
     listEl.innerHTML = "";
+    var more = document.getElementById("btn-more");
+    if (more) more.hidden = true;
   }
 
   var lastCount = 0;
   var pollingStopped = false;
   var tipEl = document.getElementById("new-tip");
+
+  // 列表分页：一次先渲染 20 条，其余点「加载更多」
+  var allWishes = [];
+  var shownCount = 0;
+  var lastReadId = 0;
+  var boxName = "Ta";
+  var PAGE = 20;
 
   function hideNewTip() { tipEl.classList.remove("show"); }
 
@@ -158,6 +171,93 @@
     return;
   }
 
+  function buildItem(w) {
+    var li = document.createElement("li");
+    var from = document.createElement("div");
+    from.className = "from";
+    from.textContent = "来自 " + (w.sender || "匿名朋友");
+    if (w.id > lastReadId) {
+      var badge = document.createElement("span");
+      badge.className = "new";
+      badge.textContent = "新";
+      from.appendChild(badge);
+    }
+    var p = document.createElement("div");
+    p.className = "text";
+    p.textContent = w.content;
+    var t = document.createElement("div");
+    t.className = "time";
+    t.textContent = fmt(w.createdAt);
+    var acts = document.createElement("div");
+    acts.className = "acts";
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "del";
+    del.textContent = "删除";
+    del.addEventListener("click", function () {
+      if (!window.confirm("删除这条愿望？删除后无法恢复。")) return;
+      fetch("/api/wishes/" + w.id + "?slug=" + encodeURIComponent(slug) +
+            "&key=" + encodeURIComponent(key), { method: "DELETE" })
+        .then(function (r) {
+          if (!r.ok && r.status !== 404) throw new Error("fail");
+          toast("已删除");
+          load();
+        })
+        .catch(function () { toast("删除失败，请刷新后重试"); });
+    });
+    acts.appendChild(del);
+    li.appendChild(from);
+    li.appendChild(p);
+    li.appendChild(t);
+    li.appendChild(acts);
+    return li;
+  }
+
+  function updateMoreBtn() {
+    var btn = document.getElementById("btn-more");
+    var left = allWishes.length - shownCount;
+    if (left > 0) {
+      btn.hidden = false;
+      btn.textContent = "加载更多（还有 " + left + " 条）";
+    } else {
+      btn.hidden = true;
+    }
+  }
+
+  function renderMore() {
+    var slice = allWishes.slice(shownCount, shownCount + PAGE);
+    slice.forEach(function (w) { listEl.appendChild(buildItem(w)); });
+    shownCount += slice.length;
+    updateMoreBtn();
+  }
+
+  // 导出为 TXT：包含署名、时间与正文，方便打印或留存
+  function exportWishes() {
+    if (!allWishes.length) { toast("还没有愿望可导出"); return; }
+    function pad(n) { return n < 10 ? "0" + n : "" + n; }
+    var now = new Date();
+    var lines = [
+      boxName + " 的愿望信箱",
+      "导出时间：" + fmt(Math.floor(Date.now() / 1000)),
+      "共 " + allWishes.length + " 条",
+      "----------------------------------------"
+    ];
+    allWishes.forEach(function (w) {
+      lines.push("[" + fmt(w.createdAt) + "] 来自 " + (w.sender || "匿名朋友"));
+      lines.push(w.content);
+      lines.push("");
+    });
+    var blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = boxName + "-愿望-" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + ".txt";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    toast("已导出 " + allWishes.length + " 条愿望");
+  }
+
   function load() {
     stateEl.style.display = "";
     stateEl.textContent = "正在打开信箱…";
@@ -182,55 +282,19 @@
         metaEl.textContent = "共 " + data.count + " 条" +
           (data.unread ? " · " + data.unread + " 条是新的" : "") +
           (data.views ? " · 被打开 " + data.views + " 次" : "");
-        // 「新」徽标图例：只在本次确实有新愿望时说明
+        lastReadId = data.lastReadId || 0;
+        boxName = name;
+        allWishes = data.wishes || [];
+        shownCount = 0;
         document.getElementById("legend").classList.toggle("show", !!data.unread);
-        if (!data.wishes.length) {
+        if (!allWishes.length) {
+          updateMoreBtn();
           setIdle("还没有收到愿望。<br>把下面的链接发给 Ta，等 Ta 许愿后这里就会出现。");
           return;
         }
         stateEl.style.display = "none";
         listEl.innerHTML = "";
-        data.wishes.forEach(function (w) {
-          var li = document.createElement("li");
-          var from = document.createElement("div");
-          from.className = "from";
-          from.textContent = "来自 " + (w.sender || "匿名朋友");
-          if (w.id > (data.lastReadId || 0)) {
-            var badge = document.createElement("span");
-            badge.className = "new";
-            badge.textContent = "新";
-            from.appendChild(badge);
-          }
-          var p = document.createElement("div");
-          p.className = "text";
-          p.textContent = w.content;
-          var t = document.createElement("div");
-          t.className = "time";
-          t.textContent = fmt(w.createdAt);
-          var acts = document.createElement("div");
-          acts.className = "acts";
-          var del = document.createElement("button");
-          del.type = "button";
-          del.className = "del";
-          del.textContent = "删除";
-          del.addEventListener("click", function () {
-            if (!window.confirm("删除这条愿望？删除后无法恢复。")) return;
-            fetch("/api/wishes/" + w.id + "?slug=" + encodeURIComponent(slug) +
-                  "&key=" + encodeURIComponent(key), { method: "DELETE" })
-              .then(function (r) {
-                if (!r.ok && r.status !== 404) throw new Error("fail");
-                toast("已删除");
-                load();
-              })
-              .catch(function () { toast("删除失败，请刷新后重试"); });
-          });
-          acts.appendChild(del);
-          li.appendChild(from);
-          li.appendChild(p);
-          li.appendChild(t);
-          li.appendChild(acts);
-          listEl.appendChild(li);
-        });
+        renderMore();
       })
       .catch(function (err) {
         if (err.message === "forbidden") {
@@ -248,6 +312,8 @@
   }
 
   document.getElementById("btn-refresh").addEventListener("click", load);
+  document.getElementById("btn-more").addEventListener("click", renderMore);
+  document.getElementById("btn-export").addEventListener("click", exportWishes);
   document.getElementById("btn-share").addEventListener("click", function () {
     var link = location.origin + "/c/" + slug;
     navigator.clipboard.writeText(link).then(function () { toast("已复制送 Ta 的链接"); },
@@ -283,7 +349,8 @@
         var s = JSON.parse(localStorage.getItem("bday_last_share") || "null");
         if (s && s.slug === slug) localStorage.removeItem("bday_last_share");
       } catch (e) {}
-      ["btn-refresh", "btn-read-all", "btn-share", "btn-edit", "btn-delete-inbox"].forEach(function (id) {
+      ["btn-refresh", "btn-read-all", "btn-export", "btn-share", "btn-edit",
+        "btn-delete-inbox", "btn-more"].forEach(function (id) {
         var b = document.getElementById(id);
         if (b) b.style.display = "none";
       });
