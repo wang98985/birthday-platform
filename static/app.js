@@ -35,13 +35,40 @@
   }
 
   // ---------- 渲染循环（仅 canvas 模板） ----------
-  const active = []; // {canvas, tpl, cfg}
+  const active = []; // {canvas, tpl, cfg, visible}
   let pvActive = null; // 预览弹窗内的 canvas
   const renderTo = BR.renderTo;
+
+  // 缩略图离屏暂停：滚出视口、切到后台都不再绘制，省电省 CPU
+  const thumbObserver = (typeof IntersectionObserver === "function")
+    ? new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          for (const a of active) {
+            if (a.canvas === en.target) { a.visible = en.isIntersecting; break; }
+          }
+        });
+      }, { rootMargin: "120px 0px" })
+    : null;
+
+  function trackThumb(item) {
+    item.visible = true;
+    active.push(item);
+    if (thumbObserver) thumbObserver.observe(item.canvas);
+  }
+
+  function clearActive() {
+    if (thumbObserver) active.forEach(function (a) { thumbObserver.unobserve(a.canvas); });
+    active.length = 0;
+  }
+
   function loop(now) {
     const t = now / 1000;
-    for (const a of active) renderTo(a.canvas, a.tpl, a.cfg, t);
-    if (pvActive) renderTo(pvActive.canvas, pvActive.tpl, pvActive.cfg, t);
+    if (!document.hidden) {
+      for (const a of active) {
+        if (a.visible !== false) renderTo(a.canvas, a.tpl, a.cfg, t);
+      }
+      if (pvActive) renderTo(pvActive.canvas, pvActive.tpl, pvActive.cfg, t);
+    }
     requestAnimationFrame(loop);
   }
 
@@ -156,7 +183,7 @@
   function buildGallery() {
     const wrap = document.getElementById("gallery");
     wrap.innerHTML = "";
-    active.length = 0;
+    clearActive();
 
     visibleIds().forEach(function (id, idx) {
       const tpl = registry[id];
@@ -251,7 +278,7 @@
           });
         })(canvas, tpl.name, tpl.accent);
       } else {
-        active.push({ canvas: canvas, tpl: tpl, cfg: demoCfg });
+        trackThumb({ canvas: canvas, tpl: tpl, cfg: demoCfg });
       }
     });
 
@@ -578,14 +605,14 @@
     // 预览接管：canvas / iframe 二选一
     const previewWrap = $("preview").parentElement;
     const canvas = $("preview");
-    active.length = 0;
+    clearActive();
     if (tpl.kind === "iframe") {
       canvas.classList.add("hidden");
       BR.mountIframe(previewWrap, tpl, cfg, editorEmbedQuery(tpl));
     } else {
       canvas.classList.remove("hidden");
       BR.removeIframe(previewWrap);
-      active.push({ canvas: canvas, tpl: tpl, cfg: cfg });
+      trackThumb({ canvas: canvas, tpl: tpl, cfg: cfg });
     }
     playTransition(previewWrap, transitionFor(id));
     if (window.BirthdayWishIntro) {
@@ -923,6 +950,7 @@
       })
       .then(function (d) {
         if (!d) return;
+        if (d.views) line.textContent += " · 打开 " + d.views + " 次";
         if (d.unread) line.textContent += " · " + d.unread + " 条新愿望";
         else line.textContent += d.count ? " · 暂无新愿望" : " · 暂无愿望";
       })
@@ -1083,6 +1111,39 @@
       });
     } catch (e) {
       box.textContent = "二维码生成失败：" + e.message;
+    }
+  }
+
+  // 把二维码合成到一张带标题的分享图（2 倍分辨率），方便保存 / 转发
+  function downloadQR() {
+    const box = $("qrcode");
+    const src = box.querySelector("canvas");
+    if (!src) { toast("二维码还没生成好，请稍等"); return; }
+    const QR = src.width || 180;
+    const S = 2, padX = 40, topText = 56, bottom = 64;
+    const W = QR * S + padX * 2;
+    const H = QR * S + topText + bottom;
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#fffdf8";
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#b88a5a";
+    ctx.font = "600 22px -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    ctx.fillText("生日祝福", W / 2, 36);
+    ctx.drawImage(src, padX, topText, QR * S, QR * S);
+    ctx.fillStyle = "#6b6358";
+    ctx.font = "15px -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    ctx.fillText("扫码打开这份祝福", W / 2, topText + QR * S + 34);
+    try {
+      const a = document.createElement("a");
+      a.download = "生日祝福二维码.png";
+      a.href = cv.toDataURL("image/png");
+      a.click();
+      toast("二维码已下载");
+    } catch (e) {
+      toast("下载失败：" + e.message);
     }
   }
 
@@ -1280,6 +1341,7 @@
     $("btn-share").addEventListener("click", openShare);
     $("btn-save-short").addEventListener("click", saveShortLink);
     $("btn-copy").addEventListener("click", copyLink);
+    $("btn-download-qr").addEventListener("click", downloadQR);
     $("btn-full").addEventListener("click", fullPreview);
     $("btn-download-py").addEventListener("click", downloadPython);
     $("modal-close").addEventListener("click", () => $("modal").classList.remove("active"));

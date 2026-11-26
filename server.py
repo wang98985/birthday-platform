@@ -320,6 +320,8 @@ def init_db():
             conn.execute("ALTER TABLE cards ADD COLUMN owner_key TEXT")
         if "last_read_id" not in cols:
             conn.execute("ALTER TABLE cards ADD COLUMN last_read_id INTEGER DEFAULT 0")
+        if "views" not in cols:
+            conn.execute("ALTER TABLE cards ADD COLUMN views INTEGER DEFAULT 0")
         conn.execute(
             "CREATE TABLE IF NOT EXISTS wishes ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -549,6 +551,13 @@ def card_short(slug):
     conn.close()
     if not row:
         return Response(page, mimetype="text/html; charset=utf-8")
+    if count_card_view(slug):
+        # 打开次数：同一 IP 30 分钟内只记一次，避免刷新刷数
+        with _db_lock:
+            wconn = get_db()
+            wconn.execute("UPDATE cards SET views=COALESCE(views,0)+1 WHERE slug=?", (slug,))
+            wconn.commit()
+            wconn.close()
     try:
         cfg = json.loads(row["config"]) or {}
     except (ValueError, TypeError):
@@ -717,6 +726,27 @@ def _client_ip():
     return remote
 
 
+# 打开次数去重：{slug|ip: 最近记录时间}，同一 IP 30 分钟内只算一次
+VIEW_DEDUP_SECONDS = 1800
+_view_seen = {}
+_view_seen_lock = Lock()
+
+
+def count_card_view(slug):
+    now = time.time()
+    key = "%s|%s" % (slug, _client_ip())
+    with _view_seen_lock:
+        last = _view_seen.get(key)
+        if last and now - last < VIEW_DEDUP_SECONDS:
+            return False
+        _view_seen[key] = now
+        if len(_view_seen) > 5000:
+            cutoff = now - VIEW_DEDUP_SECONDS
+            for k in [k for k, v in _view_seen.items() if v < cutoff]:
+                _view_seen.pop(k, None)
+    return True
+
+
 @app.route("/api/wishes", methods=["POST"])
 def add_wish():
     """访客许愿：只能提交，不能查看别人写了什么。"""
@@ -761,7 +791,7 @@ def list_wishes():
         return jsonify({"error": "bad_slug"}), 400
     with _db_lock:
         conn = get_db()
-        row = conn.execute("SELECT config, owner_key, last_read_id FROM cards WHERE slug=?",
+        row = conn.execute("SELECT config, owner_key, last_read_id, views FROM cards WHERE slug=?",
                            (slug,)).fetchone()
         if not row:
             conn.close()
@@ -776,7 +806,8 @@ def list_wishes():
                               (slug, last_read)).fetchone()["c"]
         if count_only:
             conn.close()
-            return jsonify({"slug": slug, "count": total, "unread": unread})
+            return jsonify({"slug": slug, "count": total, "unread": unread,
+                            "views": row["views"] or 0})
         rows = conn.execute(
             "SELECT id, content, sender, created_at FROM wishes WHERE slug=? ORDER BY id DESC",
             (slug,)
@@ -795,6 +826,7 @@ def list_wishes():
         "name": name,
         "count": len(rows),
         "unread": unread,
+        "views": row["views"] or 0,
         "lastReadId": last_read,
         "wishes": [{"id": r["id"], "content": r["content"], "sender": r["sender"] or "",
                     "createdAt": r["created_at"]}
@@ -911,7 +943,7 @@ def list_inboxes():
         conn = get_db()
         # 一条 SQL 取齐：避免对每张卡单独查两次愿望数（N+1）
         rows = conn.execute(
-            "SELECT c.slug, c.config, c.owner_key, c.last_read_id,"
+            "SELECT c.slug, c.config, c.owner_key, c.last_read_id, c.views,"
             " (SELECT COUNT(*) FROM wishes w WHERE w.slug=c.slug) AS cnt,"
             " (SELECT COUNT(*) FROM wishes w WHERE w.slug=c.slug AND w.id > COALESCE(c.last_read_id,0)) AS unread"
             " FROM cards c WHERE c.owner_key IS NOT NULL AND c.owner_key != ''"
@@ -932,6 +964,7 @@ def list_inboxes():
                 "inboxUrl": "%s/inbox/%s#k=%s" % (base, r["slug"], r["owner_key"]),
                 "count": r["cnt"],
                 "unread": r["unread"],
+                "views": r["views"] or 0,
             })
         conn.close()
     return jsonify({"inboxes": out})

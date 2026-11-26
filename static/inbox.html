@@ -180,7 +180,8 @@
         titleEl.appendChild(document.createTextNode(" 的愿望信箱"));
         document.title = (data.unread ? "(" + data.unread + ") " : "") + name + " 的愿望信箱";
         metaEl.textContent = "共 " + data.count + " 条" +
-          (data.unread ? " · " + data.unread + " 条是新的" : "");
+          (data.unread ? " · " + data.unread + " 条是新的" : "") +
+          (data.views ? " · 被打开 " + data.views + " 次" : "");
         // 「新」徽标图例：只在本次确实有新愿望时说明
         document.getElementById("legend").classList.toggle("show", !!data.unread);
         if (!data.wishes.length) {
