@@ -2,17 +2,11 @@ services:
   - type: web
     name: birthday-platform
     runtime: python
-    # 免费 plan 不挂磁盘，cards.db 会在重启/重新部署后清空；
-    # 需要长期保留卡片与愿望时用 starter（含 1GB 持久磁盘）。
-    plan: starter
+    # free：不挂磁盘，cards.db 会在重新部署/重启后清空（数据用 /api/db/export 备份）
+    # 想长期保留卡片与愿望：改成 starter，并照 README 的说明加 1GB 磁盘 + DATABASE_PATH
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.6"
-      - key: DATABASE_PATH
-        value: /var/data/cards.db
-    disk:
-      name: data
-      mountPath: /var/data
-      sizeGB: 1

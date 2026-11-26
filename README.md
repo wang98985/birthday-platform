@@ -134,7 +134,8 @@ git push -u origin main
 
 数据持久化与注意点：
 
-- `render.yaml` 已把 `DATABASE_PATH` 设为 `/var/data/cards.db` 并挂 1GB 磁盘（starter 套餐）。免费 plan 不支持磁盘，重新部署会清空卡片与愿望。
+- 仓库里的 `render.yaml` 默认用**免费 plan**：能直接上线，但没有磁盘，重新部署或实例重启后 `cards.db` 会清空，卡片与愿望随之丢失（适合演示）。
+- 想长期保留：把 `render.yaml` 的 `plan` 改成 `starter`（含 1GB 磁盘），并加上 `DATABASE_PATH=/var/data/cards.db` 与 `disk: {name: data, mountPath: /var/data, sizeGB: 1}`，重新部署即可。
 - 也可以直接用仓库里的 `Dockerfile` 部署到 Railway / Fly.io / 自建服务器，只要把卷挂到 `/data`。
 - `static/uploads/` 里上传的音乐与自定义模板属于容器内文件，重新部署会丢失（卡片与愿望不受影响）。
 - `/api/inboxes` 与 `/api/db/export` 只对本机开放，公网访问会返回 403；主人查看愿望请用生分享链接时保存的 `/inbox/<slug>#k=…`。
