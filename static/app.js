@@ -17,6 +17,7 @@
     wish: "愿新的一岁 闪闪发光\n平安喜乐 万事胜意",
     signoff: "—— 藏在代码里的浪漫",
     letter: "",
+    notes: "",
     accent: "#ffe9a8",
     pixel: false,
     music: { enabled: false, source: "none", trackId: "", url: "", volume: 0.6 }
@@ -530,6 +531,9 @@
     // 信件内容仅对带信件的模板开放
     $("f-letter").value = cfg.letter || "";
     $("letter-field").style.display = tpl.letters ? "" : "none";
+    // 翻牌背面寄语仅对带翻牌卡片的模板开放
+    $("f-notes").value = cfg.notes || "";
+    $("notes-field").style.display = tpl.notes ? "" : "none";
     // 像素开关仅对 canvas 模板有意义
     $("f-pixel").parentElement.style.display = (tpl.kind === "iframe") ? "none" : "";
 
@@ -604,12 +608,56 @@
     $("music-upload-wrap").style.display = (src === "upload") ? "" : "none";
   }
 
+  // 翻牌背面寄语：随机生成 12 句，生成后仍可手动修改
+  const NOTE_POOL = [
+    "愿这份祝福，陪你走过闪闪发光的新一岁",
+    "愿你所求皆如愿，所行皆坦途",
+    "愿你眼里有光，心中有爱，脚下有路",
+    "愿每一岁都奔走在自己的热爱里",
+    "愿你被这个世界温柔以待",
+    "愿你今后的每一天都有好心情",
+    "愿所有美好都如期而至",
+    "愿你永远有说走就走的勇气",
+    "愿你所有的努力都不被辜负",
+    "愿你平安喜乐，万事胜意",
+    "愿你笑起来像星星一样亮",
+    "愿你日子清透，抬头遇见的都是温柔",
+    "愿你新的一岁，有酒有肉有朋友",
+    "愿你每一天都被幸福轻轻拥抱",
+    "愿时光温柔，愿你事事顺心",
+    "愿你想要的都拥有，得不到的都释怀",
+    "愿你不慌不忙，心之所向，素履以往",
+    "愿你今年的愿望，明年都实现",
+    "愿你永远保持热爱，奔赴山海",
+    "愿你的世界永远晴朗，没有阴霾",
+    "愿你岁岁平安，年年有今朝",
+    "愿你三餐四季，温柔有趣",
+    "愿你往后的日子，处处是惊喜",
+    "愿你自在如风，明亮如星",
+    "愿有人懂你的奇奇怪怪，陪你可可爱爱",
+    "愿你被爱包围，被幸福追随"
+  ];
+
+  function randomNotes() {
+    const pool = NOTE_POOL.slice();
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+    }
+    cfg.notes = pool.slice(0, 12).join("\n");
+    $("f-notes").value = cfg.notes;
+    cfgChanged();
+    toast("已随机生成 12 句，可继续修改");
+  }
+
   function bindForm() {
     $("f-name").addEventListener("input", function (e) { cfg.name = e.target.value.slice(0, 30); cfgChanged(); });
     $("f-birthday").addEventListener("input", function (e) { cfg.birthday = e.target.value; cfgChanged(); });
     $("f-wish").addEventListener("input", function (e) { cfg.wish = e.target.value.slice(0, 300); cfgChanged(); });
     $("f-signoff").addEventListener("input", function (e) { cfg.signoff = e.target.value.slice(0, 40); cfgChanged(); });
     $("f-letter").addEventListener("input", function (e) { cfg.letter = e.target.value.slice(0, 1000); cfgChanged(); });
+    $("f-notes").addEventListener("input", function (e) { cfg.notes = e.target.value.slice(0, 600); cfgChanged(); });
+    $("btn-notes-random").addEventListener("click", randomNotes);
     $("f-accent").addEventListener("input", function (e) { cfg.accent = e.target.value; });
     $("f-pixel").addEventListener("change", function (e) { cfg.pixel = e.target.checked; });
     $("f-template").addEventListener("change", function (e) { openEditor(e.target.value); });
@@ -785,6 +833,10 @@
           if (!hit) list.push({ slug: x.slug, name: x.name || "", inboxUrl: x.inboxUrl, ts: 0 });
           else if (!hit.name && x.name) hit.name = x.name;
         });
+      } else if (res.status === 403) {
+        // 公网部署时本机专用接口不可用：隐藏同样会 403 的导出按钮
+        const box = $("db-export-block");
+        if (box) box.style.display = "none";
       }
     } catch (e) {}
     const box = $("inbox-list");

@@ -13,7 +13,7 @@
       <a href="#" onclick="document.getElementById('gallery-view').scrollIntoView();return false;">模板库</a>
       <a href="#" onclick="document.getElementById('fx-block').scrollIntoView({behavior:'smooth'});return false;">特效库</a>
       <a href="#" id="nav-inbox">愿望信箱<span class="dot" id="nav-inbox-badge" hidden></span></a>
-      <a href="https://github.com" target="_blank" rel="noopener">关于</a>
+      <a href="https://github.com/wang98985/birthday-platform" target="_blank" rel="noopener">关于</a>
     </nav>
   </header>
 
@@ -67,6 +67,11 @@
           <div class="field" id="letter-field" style="display:none">
             <label>信件内容 <span class="hint">可选，每行一段，显示在「给你的一封信」里</span></label>
             <textarea id="f-letter" maxlength="1000" placeholder="写一封只属于 Ta 的信，留空则使用模板默认信件…"></textarea>
+          </div>
+          <div class="field" id="notes-field" style="display:none">
+            <label>翻牌背面寄语 <span class="hint">每行一张卡片，最多 12 行；留空用模板默认</span></label>
+            <textarea id="f-notes" maxlength="600" placeholder="愿这份祝福，陪你走过闪闪发光的新一岁"></textarea>
+            <button type="button" class="btn small" id="btn-notes-random" style="margin-top:8px">随机生成 12 句</button>
           </div>
           <div class="field">
             <label>落款 <span class="hint">可选，例如：—— 爱你的 XX</span></label>
@@ -159,10 +164,12 @@
         <button class="btn small" id="btn-inbox-manual">打开</button>
       </div>
       <div class="tip">换了设备或清了缓存时，把之前复制的信箱链接粘贴到这里即可找回。</div>
-      <div class="inbox-manual">
-        <button class="btn small" id="btn-db-export">导出数据备份（cards.db）</button>
+      <div id="db-export-block">
+        <div class="inbox-manual">
+          <button class="btn small" id="btn-db-export">导出数据备份（cards.db）</button>
+        </div>
+        <div class="tip">换电脑时把这个文件放回项目目录，全部卡片与愿望都会跟过来。</div>
       </div>
-      <div class="tip">换电脑时把这个文件放回项目目录，全部卡片与愿望都会跟过来。</div>
       <div class="modal-actions">
         <button class="btn primary" id="inbox-close">关闭</button>
       </div>

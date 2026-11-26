@@ -166,9 +166,12 @@ LIMITS = {
     "signoff": 40,
     "accent": 16,
     "letter": 1000,
+    "notes": 600,
 }
 
 app = Flask(__name__, static_folder=None)  # 手动控制静态路由
+# 上传音乐上限 15MB，这里留出 multipart 余量，避免超大请求占满内存
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 _db_lock = Lock()
 
 # 简易内存级 IP 限流：{ip: [timestamps]}
@@ -207,6 +210,9 @@ def backup_db():
 
 
 def init_db():
+    db_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     os.makedirs(UPLOAD_MUSIC_DIR, exist_ok=True)
     os.makedirs(UPLOAD_TPL_DIR, exist_ok=True)
     backup_db()
@@ -264,16 +270,7 @@ def valid_slug(slug):
 
 # ---------------- 限流 ----------------
 def rate_ok(ip):
-    now = time.time()
-    with _rate_lock:
-        bucket = _rate.get(ip, [])
-        bucket = [t for t in bucket if now - t < RATE_WINDOW]
-        if len(bucket) >= RATE_MAX:
-            _rate[ip] = bucket
-            return False
-        bucket.append(now)
-        _rate[ip] = bucket
-        return True
+    return _bucket_ok(ip, RATE_MAX)
 
 
 WISH_RATE_MAX = 12      # 每 IP 每分钟最多许愿次数
@@ -288,6 +285,12 @@ def wish_rate_ok(ip):
 def _bucket_ok(key, limit):
     now = time.time()
     with _rate_lock:
+        # 定期清理过期 IP，避免长期运行后字典无限增长
+        if len(_rate) > 4000:
+            stale = [k for k, ts in _rate.items()
+                     if not ts or now - ts[-1] >= RATE_WINDOW]
+            for k in stale:
+                _rate.pop(k, None)
         bucket = [t for t in _rate.get(key, []) if now - t < RATE_WINDOW]
         if len(bucket) >= limit:
             _rate[key] = bucket
@@ -367,8 +370,7 @@ def health():
 
 @app.route("/api/cards", methods=["POST"])
 def create_card():
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
-    ip = ip.split(",")[0].strip()
+    ip = _client_ip()
     if not rate_ok(ip):
         return jsonify({"error": "rate_limited",
                         "retry_after": RATE_WINDOW}), 429
@@ -421,9 +423,23 @@ def inbox_page(slug):
     return send_from_directory(STATIC_DIR, "inbox.html")
 
 
+def _is_loopback(ip):
+    return ip in ("127.0.0.1", "::1", "localhost")
+
+
 def _client_ip():
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
-    return ip.split(",")[0].strip()
+    """真实客户端 IP。
+
+    只有直连来自本机反代（remote_addr 为回环地址）时才参考
+    X-Forwarded-For；否则一律使用 remote_addr。避免公网访客自带该头
+    冒充本机、绕过限流。
+    """
+    remote = request.remote_addr or "unknown"
+    if _is_loopback(remote):
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            return xff.split(",")[0].strip() or remote
+    return remote
 
 
 @app.route("/api/wishes", methods=["POST"])
@@ -512,8 +528,18 @@ def list_wishes():
 
 
 def _is_local():
-    """请求是否来自本机（主人自己开的浏览器）。"""
-    return _client_ip() in ("127.0.0.1", "::1", "localhost")
+    """请求是否来自本机（主人自己开的浏览器）。
+
+    不能只看 X-Forwarded-For——公网请求同样可以自带该头。必须保证
+    remote_addr 本身就是回环地址，且代理链首跳也不是外部 IP。
+    """
+    remote = request.remote_addr or ""
+    if not _is_loopback(remote):
+        return False
+    xff = request.headers.get("X-Forwarded-For", "")
+    if not xff:
+        return True
+    return _is_loopback(xff.split(",")[0].strip())
 
 
 @app.route("/api/inboxes")
@@ -681,22 +707,27 @@ html,body{margin:0;background:radial-gradient(120% 90% at 50% 12%,#241a52 0%,#12
 """
 
 
+def json_for_script(obj):
+    """序列化后注入 <script>：转义 </ 防止配置里的内容提前闭合标签（XSS）。"""
+    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
+
 def build_shim(template_name, platform_cfg, merged_cfg):
     """注入到 iframe <head> 的垫片脚本：
        - 暴露 window.__CFG__ 给模板 fetch('config.json')
        - 静默模板内所有 <audio>，避免与平台音乐叠音
        - 覆盖标题 / snow 模板的中心标题
     """
-    cfg_json = json.dumps(merged_cfg if merged_cfg else platform_cfg, ensure_ascii=False)
+    cfg_json = json_for_script(merged_cfg if merged_cfg else platform_cfg)
     title = ((platform_cfg.get("name") or "").strip() + "，生日快乐") or "生日快乐"
-    title_json = json.dumps(title, ensure_ascii=False)
+    title_json = json_for_script(title)
     is_snow = "true" if template_name == "snow-heart" else "false"
     snow_title = (platform_cfg.get("name") or "").strip()
     if not snow_title:
         first_line = (platform_cfg.get("wish") or "").split("\n", 1)[0].strip()
         snow_title = first_line or "生日快乐"
     snow_title = snow_title[:20]
-    snow_title_json = json.dumps(snow_title + " ♥", ensure_ascii=False)
+    snow_title_json = json_for_script(snow_title + " ♥")
 
     prefix = HB_ENHANCE if template_name == "hb-story" else ""
 
@@ -815,9 +846,9 @@ def build_hbcake_page(platform_cfg, html_path):
     """星河蛋糕模板：注入配置 + 运行时文案替换脚本。"""
     name = (platform_cfg.get("name") or "").strip()
     title = (name + "，生日快乐") if name else "生日快乐"
-    cfg_json = json.dumps(platform_cfg, ensure_ascii=False).replace("</", "<\\/")
+    cfg_json = json_for_script(platform_cfg)
     head = ("<script>window.__CFG__=" + cfg_json +
-            ";document.title=" + json.dumps(title, ensure_ascii=False) + ";</script>")
+            ";document.title=" + json_for_script(title) + ";</script>")
     with open(html_path, "r", encoding="utf-8") as f:
         html = f.read()
     html = inject_head(html, head)
@@ -942,8 +973,8 @@ def embed_template(name):
     # 轻量 shim：只暴露 __CFG__ 与标题，供自定义 HTML 读取；不改写其音频行为
     title = ((platform_cfg.get("name") or "").strip() + "，生日快乐") or "生日快乐"
     inject = (
-        "<script>window.__CFG__=" + json.dumps(platform_cfg, ensure_ascii=False) +
-        ";document.title=" + json.dumps(title, ensure_ascii=False) + ";</script>"
+        "<script>window.__CFG__=" + json_for_script(platform_cfg) +
+        ";document.title=" + json_for_script(title) + ";</script>"
     )
     with open(html_path, "r", encoding="utf-8") as f:
         html = f.read()
@@ -973,8 +1004,7 @@ def list_templates():
 
 @app.route("/api/templates", methods=["POST"])
 def create_template():
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
-    ip = ip.split(",")[0].strip()
+    ip = _client_ip()
     if not rate_ok(ip):
         return jsonify({"error": "rate_limited", "retry_after": RATE_WINDOW}), 429
 
@@ -1101,8 +1131,7 @@ def save_music_file(f):
 
 @app.route("/api/upload/music", methods=["POST"])
 def upload_music():
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
-    ip = ip.split(",")[0].strip()
+    ip = _client_ip()
     if not rate_ok(ip):
         return jsonify({"error": "rate_limited",
                         "retry_after": RATE_WINDOW}), 429
@@ -1121,16 +1150,27 @@ def upload_music():
 # 静态资源（js/css/图片等）
 @app.route("/<path:filename>")
 def static_files(filename):
-    # 安全：只允许 static 目录内的文件
-    full = os.path.normpath(os.path.join(STATIC_DIR, filename))
-    if not full.startswith(os.path.normpath(STATIC_DIR)):
-        abort(404)
-    if os.path.isfile(full):
+    # 安全：只允许 static 目录内的文件（用 commonpath 防 ../ 越界）
+    static_root = os.path.normpath(STATIC_DIR)
+    full = os.path.normpath(os.path.join(static_root, filename))
+    try:
+        inside = os.path.commonpath([static_root, full]) == static_root
+    except ValueError:
+        inside = False
+    if inside and os.path.isfile(full):
         return send_from_directory(STATIC_DIR, filename)
     abort(404)
 
 
-if __name__ == "__main__":
+# WSGI（gunicorn / PythonAnywhere）直接导入 app 时不会执行 __main__，
+# 因此模块加载阶段就建表、补列、建目录，避免首次调用接口时报 500。
+# 初始化失败不应让整个站点起不来，记录日志后继续。
+try:
     init_db()
+except Exception as exc:  # noqa: BLE001
+    print("[init] 数据库初始化失败：%s" % exc)
+
+
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)

@@ -613,6 +613,16 @@ if (platformWish) {
   CONFIG.introCards = wishLines.map(function (line) { return [line, ""]; }).concat(CONFIG.introCards).slice(0, 12);
 }
 if (platformSignoff) CONFIG.signature = platformSignoff;
+// 翻牌背面寄语：每行对应一张卡片，未填写的沿用模板默认文案
+const platformNotes = String(PLATFORM.notes || "").trim();
+if (platformNotes) {
+  const noteLines = platformNotes.split(/\n+/).map(function (line) { return line.trim(); }).filter(Boolean);
+  if (noteLines.length) {
+    CONFIG.introCards = CONFIG.introCards.map(function (pair, i) {
+      return [pair[0], noteLines[i] || pair[1]];
+    });
+  }
+}
 // 信件正文：自定义内容优先，按行拆段
 const platformLetter = String(PLATFORM.letter || "").trim();
 if (platformLetter) {

@@ -639,7 +639,8 @@
       kind: "iframe",
       desc: "星河开场 + 3D 祝福便签 + 吹蜡烛许愿 + 打字机信件",
       embedUrl: "/embed/starwish",
-      letters: true
+      letters: true,
+      notes: true
     },
     "hbcake": {
       id: "hbcake",

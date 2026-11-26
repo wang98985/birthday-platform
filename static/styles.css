@@ -171,15 +171,21 @@ footer { text-align: center; color: var(--ink-soft); font-size: 12px; padding: 3
 /* 模板库工具条 */
 .gallery-tools { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
 
-/* 卡片删除按钮 */
+/* 卡片删除按钮：默认不可点，避免误触（移动端常显） */
 .tpl-card .tpl-del {
   position: absolute; top: 8px; right: 8px; z-index: 3;
   width: 26px; height: 26px; border-radius: 50%; border: none; cursor: pointer;
   background: rgba(20,16,8,.5); color: #fff; font-size: 15px; line-height: 1;
   display: flex; align-items: center; justify-content: center; opacity: 0;
+  pointer-events: none;
   transition: opacity .2s, background .2s;
 }
-.tpl-card:hover .tpl-del { opacity: 1; }
+.tpl-card:hover .tpl-del, .tpl-card:focus-within .tpl-del {
+  opacity: 1; pointer-events: auto;
+}
+@media (hover: none) {
+  .tpl-card .tpl-del { opacity: .85; pointer-events: auto; }
+}
 .tpl-card .tpl-del:hover { background: #b04a3a; }
 
 /* 添加模板卡片 */
