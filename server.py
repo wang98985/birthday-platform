@@ -207,6 +207,9 @@ PRIVATE_API_PREFIXES = ("/api/wishes", "/api/inboxes", "/api/db/")
 @app.after_request
 def gzip_response(resp):
     """对文本类响应做 gzip，1.2MB 的模板页可压到约 200KB。"""
+    # 基础安全响应头（不覆盖各路由已设置的值）
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     if request.path.startswith(PRIVATE_API_PREFIXES):
         resp.headers["Cache-Control"] = "no-store"
     if resp.direct_passthrough or resp.status_code != 200:
@@ -405,8 +408,10 @@ def handle_not_found(exc):
     if request.path.startswith("/api/"):
         return jsonify({"error": "not_found"}), 404
     tip = "链接可能已失效，或者卡片已被主人删除。"
-    return Response(NOT_FOUND_HTML % tip, status=404,
+    resp = Response(NOT_FOUND_HTML % tip, status=404,
                     content_type="text/html; charset=utf-8")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def gen_owner_key():

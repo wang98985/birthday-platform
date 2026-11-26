@@ -110,6 +110,21 @@
     .wish-cancel { background: #efe7da; color: #5b5348; }
     .wish-done { text-align: center; padding: 14px 4px 4px; font-size: 14px; line-height: 1.8; }
     .wish-done .big { font-size: 26px; color: #b88a5a; margin-bottom: 6px; }
+
+    /* 卡片已被删除 / 链接失效 */
+    .gone-mask {
+      position: fixed; inset: 0; z-index: 50; display: none;
+      align-items: center; justify-content: center; padding: 24px;
+      background: radial-gradient(circle at 50% 40%, #2a2036, #0b1026 70%);
+    }
+    .gone-mask.show { display: flex; }
+    .gone-card { text-align: center; color: #fffdf8; max-width: 360px; }
+    .gone-card .big { font-size: 22px; font-weight: 600; letter-spacing: 1px; }
+    .gone-card p { font-size: 13px; color: rgba(255,255,255,.6); line-height: 1.9; margin: 12px 0 22px; }
+    .gone-card a {
+      display: inline-block; text-decoration: none; background: #b88a5a; color: #fffdf8;
+      border-radius: 999px; padding: 10px 24px; font-size: 13px;
+    }
   </style>
 </head>
 <body>
@@ -136,6 +151,14 @@
       <div id="qr-box"></div>
       <div class="link" id="qr-link"></div>
       <button class="close" id="qr-close">关闭</button>
+    </div>
+  </div>
+
+  <div class="gone-mask" id="gone">
+    <div class="gone-card">
+      <div class="big">这份祝福不在了</div>
+      <p>链接可能已失效，或者主人已经删除了这张卡片。</p>
+      <a href="/">制作一张新的</a>
     </div>
   </div>
 
@@ -221,6 +244,37 @@
         .catch(function () {});
     }
 
+    // 复制链接：优先 Clipboard API，不可用时退回临时文本框（兼容内嵌浏览器 / 非安全上下文）
+    function copyText(t) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(t);
+      }
+      return new Promise(function (resolve, reject) {
+        var ta = document.createElement("textarea");
+        ta.value = t;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand("copy") ? resolve() : reject(new Error("copy"));
+        } catch (e) {
+          reject(e);
+        }
+        document.body.removeChild(ta);
+      });
+    }
+
+    // 短链对应的卡片不存在：不再退回默认贺卡，明确告诉访客链接已失效
+    function showGone() {
+      document.getElementById("gone").classList.add("show");
+      document.getElementById("bar").classList.add("hidden");
+      document.getElementById("hint").classList.add("hidden");
+      document.body.style.cursor = "";
+    }
+
     async function resolve() {
       await loadCustomTemplates();
       var params = new URLSearchParams(location.search);
@@ -233,6 +287,7 @@
       if (id) {
         try {
           var r = await fetch("/api/cards/" + encodeURIComponent(id));
+          if (r.status === 404) { showGone(); return; }
           var card = r.ok ? await r.json() : null;
           cfg = card || fallback;
           if (r.ok && card) cardSlug = id;
@@ -253,6 +308,7 @@
         var sid2 = params.get("s");
         try {
           var r2 = await fetch("/api/cards/" + encodeURIComponent(sid2));
+          if (r2.status === 404) { showGone(); return; }
           cfg = r2.ok ? await r2.json() : fallback;
           if (r2.ok) cardSlug = sid2;
         } catch (e) { cfg = fallback; }
@@ -316,7 +372,12 @@
           })
         }).then(function (res) {
           if (res.status === 404) throw new Error("gone");
-          if (res.status === 429) throw new Error("busy");
+          if (res.status === 429) {
+            // 429 有两种：信箱收满（full）或短时间许愿太频繁（rate_limited）
+            return res.json().catch(function () { return {}; }).then(function (d) {
+              throw new Error(d && d.error === "full" ? "full" : "busy");
+            });
+          }
           if (!res.ok) throw new Error("bad");
           text.value = "";
           nameInput.value = "";
@@ -328,6 +389,7 @@
         }).catch(function (err) {
           var msg = "发送失败，再试一次";
           if (err && err.message === "gone") msg = "这个祝福链接已失效";
+          else if (err && err.message === "full") msg = "Ta 的信箱已经满啦";
           else if (err && err.message === "busy") msg = "许愿的人太多啦，稍后再试";
           send.textContent = msg;
           setTimeout(function () { send.textContent = "发送愿望"; }, 2400);
@@ -423,10 +485,20 @@
         document.getElementById("qr-mask").classList.remove("show");
       });
       document.getElementById("btn-copy").addEventListener("click", function () {
-        navigator.clipboard.writeText(link).then(function () {
+        copyText(link).then(function () {
           var b = document.getElementById("btn-copy");
           var old = b.textContent; b.textContent = "已复制"; setTimeout(function(){b.textContent = old;}, 1500);
+        }).catch(function () {
+          window.prompt("手动复制这个链接", link);
         });
+      });
+
+      // Esc 关闭许愿框 / 二维码
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") {
+          document.getElementById("wish-mask").classList.remove("show");
+          document.getElementById("qr-mask").classList.remove("show");
+        }
       });
     }
 

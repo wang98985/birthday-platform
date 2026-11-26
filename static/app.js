@@ -1373,7 +1373,14 @@
       else openEditor(tpl.id);
     });
     document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") closePreview();
+      if (e.key !== "Escape") return;
+      const pv = $("preview-modal");
+      if (pv && pv.classList.contains("active")) { closePreview(); return; }
+      // 依次关闭最上层的弹窗（模板库 / 信箱 / 分享），编辑器本身不响应 Esc
+      ["tpl-modal", "inbox-modal", "modal"].forEach(function (id) {
+        const m = $(id);
+        if (m && m.classList.contains("active")) m.classList.remove("active");
+      });
     });
     $("btn-restore-tpl").addEventListener("click", async function () {
       try {
