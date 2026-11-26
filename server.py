@@ -772,6 +772,32 @@ def delete_wish(wid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/wishes/read-all", methods=["POST"])
+def read_all_wishes():
+    """一键已读：把该信箱的未读进度推到最新。"""
+    raw = request.get_json(silent=True) or {}
+    slug = str(raw.get("slug", ""))
+    key = str(raw.get("key", ""))
+    if not valid_slug(slug):
+        return jsonify({"error": "bad_slug"}), 400
+    with _db_lock:
+        conn = get_db()
+        row = conn.execute("SELECT owner_key FROM cards WHERE slug=?", (slug,)).fetchone()
+        if not row:
+            conn.close()
+            return jsonify({"error": "not_found"}), 404
+        if not _owner_ok(row["owner_key"], key):
+            conn.close()
+            return jsonify({"error": "forbidden"}), 403
+        last = conn.execute(
+            "SELECT COALESCE(MAX(id), 0) AS m FROM wishes WHERE slug=?", (slug,)
+        ).fetchone()["m"]
+        conn.execute("UPDATE cards SET last_read_id=? WHERE slug=?", (last, slug))
+        conn.commit()
+        conn.close()
+    return jsonify({"ok": True, "lastReadId": last})
+
+
 def _is_local():
     """请求是否来自本机（主人自己开的浏览器）。
 

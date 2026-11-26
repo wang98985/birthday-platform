@@ -743,6 +743,7 @@
 
   // ---------- 愿望信箱（主人侧） ----------
   const INBOX_STORE = "bday_inboxes";
+  let inboxCache = [];
   const SHARE_STORE = "bday_last_share";
   const ADMIN_STORE = "bday_admin_key";
   const DRAFT_STORE = "bday_draft";
@@ -945,6 +946,7 @@
     } catch (e) {}
     const box = $("inbox-list");
     box.innerHTML = "";
+    inboxCache = list;
     if (!list.length) {
       box.innerHTML = '<div class="inbox-empty">还没有愿望信箱。<br>生成分享链接时会自动创建，并在这里汇总。</div>';
     } else {
@@ -979,6 +981,12 @@
           acts.appendChild(edit);
         }
         acts.appendChild(a);
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "btn small";
+        del.textContent = "删除";
+        del.addEventListener("click", function () { deleteInbox(item); });
+        acts.appendChild(del);
         row.appendChild(info);
         row.appendChild(acts);
         box.appendChild(row);
@@ -986,6 +994,51 @@
       });
     }
     $("inbox-modal").classList.add("active");
+  }
+
+  // 一键已读：把列表里所有信箱的未读清零
+  async function markAllInboxesRead() {
+    const list = inboxCache.length ? inboxCache : loadInboxes();
+    const jobs = [];
+    list.forEach(function (item) {
+      const p = parseInboxUrl(item.inboxUrl);
+      if (!p) return;
+      jobs.push(fetch("/api/wishes/read-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug: p.slug, key: p.key })
+      }).catch(function () {}));
+    });
+    if (!jobs.length) { toast("还没有可标记的信箱"); return; }
+    await Promise.all(jobs);
+    toast("已全部标为已读");
+    refreshInboxBadge();
+    openInboxList();
+  }
+
+  // 删除信箱：链接、愿望一并删除
+  function deleteInbox(item) {
+    const p = parseInboxUrl(item.inboxUrl);
+    if (!p) { toast("缺少凭证，无法删除"); return; }
+    const label = item.name || item.slug;
+    if (!window.confirm("删除「" + label + "」这个信箱？\n分享链接会失效，收到的愿望也会一并删除。")) return;
+    fetch("/api/cards/" + encodeURIComponent(item.slug) + "?key=" + encodeURIComponent(p.key),
+      { method: "DELETE" })
+      .then(function (res) {
+        if (!res.ok && res.status !== 404) throw new Error("HTTP " + res.status);
+        try {
+          const saved = loadInboxes().filter(function (x) { return x.slug !== item.slug; });
+          localStorage.setItem(INBOX_STORE, JSON.stringify(saved));
+        } catch (e) {}
+        try {
+          const s = JSON.parse(localStorage.getItem(SHARE_STORE) || "null");
+          if (s && s.slug === item.slug) localStorage.removeItem(SHARE_STORE);
+        } catch (e) {}
+        toast("信箱已删除");
+        refreshInboxBadge();
+        openInboxList();
+      })
+      .catch(function (e) { toast("删除失败：" + e.message); });
   }
 
   // ---------- 分享 / 二维码 ----------
@@ -1222,6 +1275,7 @@
       openInboxList();
     });
     $("inbox-close").addEventListener("click", () => $("inbox-modal").classList.remove("active"));
+    $("btn-read-all-inboxes").addEventListener("click", markAllInboxesRead);
     $("btn-inbox-manual").addEventListener("click", function () {
       const raw = $("inbox-manual").value.trim();
       const parsed = parseInboxUrl(raw);
