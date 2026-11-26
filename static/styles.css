@@ -112,7 +112,7 @@ main { max-width: 1120px; margin: 0 auto; padding: 28px; }
 .modal .link-row input { flex: 1; padding: 9px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; background:#fff; }
 .modal .qr-box { text-align: center; margin: 8px 0 14px; }
 .modal .qr-box #qrcode { display: inline-block; padding: 10px; background: #fff; border-radius: 10px; }
-.modal .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.modal .modal-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
 .modal .tip { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
 .modal .inbox-block { border-top: 1px dashed var(--line); margin-top: 14px; padding-top: 14px; }
 .modal .inbox-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
@@ -173,6 +173,11 @@ footer { text-align: center; color: var(--ink-soft); font-size: 12px; padding: 3
 
 /* 模板库工具条 */
 .gallery-tools { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+.draft-bar {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border: 1px dashed var(--line); border-radius: 10px;
+  background: #fffaf0; font-size: 12px; color: var(--ink-soft);
+}
 
 /* 卡片删除按钮：默认不可点，避免误触（移动端常显） */
 .tpl-card .tpl-del {

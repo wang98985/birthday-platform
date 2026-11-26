@@ -79,6 +79,7 @@
 
   function cfgChanged() {
     if (musicCtrl) musicCtrl.refresh();
+    queueDraftSave();
     // iframe 模板：配置变更后防抖刷新 iframe src
     const tpl = registry[cfg.template];
     if (tpl && tpl.kind === "iframe") {
@@ -517,6 +518,9 @@
   function openEditor(id) {
     cfg.template = id;
     const tpl = registry[id];
+    draftArmed = false;
+    const draftBar = $("draft-bar");
+    if (draftBar) draftBar.style.display = "none";
     document.getElementById("gallery-view").style.display = "none";
     document.getElementById("editor-view").classList.add("active");
     document.getElementById("tpl-name").textContent = tpl.name;
@@ -648,6 +652,7 @@
     }
     cfg.notes = pool.slice(0, 12).join("\n");
     $("f-notes").value = cfg.notes;
+    draftArmed = true;
     cfgChanged();
     toast("已随机生成 12 句，可继续修改");
   }
@@ -660,8 +665,8 @@
     $("f-letter").addEventListener("input", function (e) { cfg.letter = e.target.value.slice(0, 1000); cfgChanged(); });
     $("f-notes").addEventListener("input", function (e) { cfg.notes = e.target.value.slice(0, 600); cfgChanged(); });
     $("btn-notes-random").addEventListener("click", randomNotes);
-    $("f-accent").addEventListener("input", function (e) { cfg.accent = e.target.value; });
-    $("f-pixel").addEventListener("change", function (e) { cfg.pixel = e.target.checked; });
+    $("f-accent").addEventListener("input", function (e) { cfg.accent = e.target.value; queueDraftSave(); });
+    $("f-pixel").addEventListener("change", function (e) { cfg.pixel = e.target.checked; queueDraftSave(); });
     $("f-template").addEventListener("change", function (e) { openEditor(e.target.value); });
     $("btn-back").addEventListener("click", closeEditor);
 
@@ -698,6 +703,7 @@
       const v = parseFloat(e.target.value);
       cfg.music.volume = v;
       player.setVolume(v);
+      queueDraftSave();
     });
     $("f-music-file").addEventListener("change", function (e) {
       const file = e.target.files && e.target.files[0];
@@ -721,6 +727,7 @@
         syncMusicSourceUI();
         nameEl.textContent = "已上传：" + (data.name || data.url.split("/").pop());
         player.setConfig(cfg.music);
+        draftArmed = true;
         cfgChanged();
         toast("音乐上传成功");
       } else {
@@ -738,6 +745,54 @@
   const INBOX_STORE = "bday_inboxes";
   const SHARE_STORE = "bday_last_share";
   const ADMIN_STORE = "bday_admin_key";
+  const DRAFT_STORE = "bday_draft";
+  let draftTimer = null;
+  let draftArmed = false;   // 只有真正编辑过才覆盖草稿，避免误点模板把旧草稿冲掉
+
+  // ---------- 草稿自动保存 ----------
+  function saveDraftNow() {
+    if (!draftArmed) return;
+    try {
+      localStorage.setItem(DRAFT_STORE, JSON.stringify({ ts: Date.now(), cfg: cfg }));
+    } catch (e) {}
+  }
+  function queueDraftSave() {
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = setTimeout(saveDraftNow, 600);
+  }
+  function loadDraft() {
+    try {
+      const d = JSON.parse(localStorage.getItem(DRAFT_STORE) || "null");
+      if (!d || !d.cfg || typeof d.cfg !== "object") return null;
+      if (d.ts && Date.now() - d.ts > 7 * 24 * 3600 * 1000) return null;
+      return d;
+    } catch (e) {
+      return null;
+    }
+  }
+  function setupDraftBar() {
+    const bar = $("draft-bar");
+    const d = loadDraft();
+    if (!bar || !d) return;
+    bar.style.display = "";
+    const when = d.ts ? new Date(d.ts).toLocaleString() : "";
+    $("draft-info").textContent = "有未完成的草稿" + (when ? "（" + when + "）" : "");
+    $("btn-draft-resume").onclick = function () {
+      cfg = Object.assign({}, defaultCfg, d.cfg);
+      cfg.music = Object.assign({}, defaultCfg.music, d.cfg.music || {});
+      if (!registry[cfg.template]) cfg.template = "galaxy";
+      draftArmed = true;
+      bar.style.display = "none";
+      openEditor(cfg.template);
+      toast("已恢复草稿");
+    };
+    $("btn-draft-discard").onclick = function () {
+      draftArmed = false;
+      try { localStorage.removeItem(DRAFT_STORE); } catch (e) {}
+      bar.style.display = "none";
+      toast("已放弃草稿");
+    };
+  }
 
   // ---------- 管理口令 ----------
   function getAdminKey() {
@@ -1133,6 +1188,14 @@
     buildGallery();
     buildFxGallery();
     bindForm();
+    // 在编辑器里真正输入过，才开始覆盖草稿
+    const editorEl = $("editor-view");
+    if (editorEl) {
+      ["input", "change"].forEach(function (evt) {
+        editorEl.addEventListener(evt, function () { draftArmed = true; }, true);
+      });
+    }
+    setupDraftBar();
     await tryLoadEditCard();
     // 音乐浮动按钮挂到预览容器
     const previewWrap = $("preview").parentElement;
